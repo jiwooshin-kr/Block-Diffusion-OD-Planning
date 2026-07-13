@@ -1,0 +1,108 @@
+import argparse
+
+
+def get_argparser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="configure all the settings")
+    
+    # device config
+    parser.add_argument("-device", type=str, help="device, [cpu, cuda]", default="default")
+    parser.add_argument("-gpu", type=int, help="gpu no", default=0)
+    
+    # path config 
+    parser.add_argument("-path", type=str, help="data path", default="./sets_data")
+    parser.add_argument("-model_path", type=str, help="model path", default="./sets_model")
+    parser.add_argument("-res_path", type=str, help="results path", default="./sets_res")
+
+    # data config
+    parser.add_argument("-d_name", type=str, help="real data name chengdu, xian", default="")
+    parser.add_argument("-n_vertex", type=int, help="number of vertices", default=20)
+    parser.add_argument("-n_path", type=int, help="number of path", default=8000)
+    parser.add_argument("-min_len", type=int, help="path length lower bound", default=4)
+    parser.add_argument("-max_len", type=int, help="path length upper bound", default=15)
+    parser.add_argument("-sim_time", action="store_true", help="simulation time condition")
+
+    # model config 
+    parser.add_argument("-model_name", type=str, help="model name")
+    parser.add_argument("-method", type=str, help="method: cold, naive")
+    parser.add_argument("-plan", type=int, help="whether to plan, 1 plan, 0 no", default=0)
+    parser.add_argument("-destroy", type=str, help="destroy manner: time, space")
+    parser.add_argument("-beta_lb", type=float, help="beta lower bound", default=0.0001)
+    parser.add_argument("-beta_ub", type=float, help="beta upper bound", default=0.1)
+    parser.add_argument("-time_dim", type=int, help="dimension of pos emb", default=20)
+    parser.add_argument("-max_T", type=int, help="max time step", default=10)
+    parser.add_argument("-gmm_comp", type=int, help="gmm component number", default=4)
+    parser.add_argument("-x_emb_dim", type=int, help="vertex embedding dim", default=50)
+    parser.add_argument("-drop_cond", type=float, help="drop condition rate", default=0.3)
+    parser.add_argument("-dims", type=str, help="temporal unet dims, finnaly multiply by n_groups", default="[100, 150, 200]")
+    parser.add_argument("-hidden_dim", type=int, help="hidden dim for time and condition", default=20)
+    parser.add_argument("-n_groups", type=int, help="number of groups for group normalization", default=8)
+    
+    # ngram model config 
+    parser.add_argument("-n_gram", type=int, help="n gram", default=1)
+    
+    # hmm model config 
+    parser.add_argument("-hidden_states", type=int, help="hidden states for hmm", default=10)
+    
+    # lstm model config 
+    # hidden_size, num_layers
+    parser.add_argument("-hidden_size", type=int, help="hidden size for lstm", default=30)
+    parser.add_argument("-num_layers", type=int, help="num_layers for lstm", default=3)
+    
+    # training config
+    parser.add_argument("-n_epoch", type=int, help="number of epoch", default=200)
+    parser.add_argument("-bs", type=int, help="batch size", default=32)
+    parser.add_argument("-lr", type=float, help="learning rate", default=0.001)
+    parser.add_argument("-gmm_samples", type=int, help="gmm samples", default=3000)
+    
+    # eval config
+    parser.add_argument("-eval_num", type=int, help="evaluation sample number, int", default=1000)
+    parser.add_argument("-applying_mask_intermediate", action="store_true", help="Apply mask intermediate")
+    parser.add_argument("-applying_mask_intermediate_temperature", action="store_true", help="applying_mask_intermediate_temperature")
+    parser.add_argument("-save_name", type=str, help="save name", default="")
+
+    parser.add_argument("-min_lat", type=float, help="min_lat", default=-1)
+    parser.add_argument("-max_lat", type=float, help="max_lat", default=-1)
+    parser.add_argument("-min_lng", type=float, help="min_lng", default=-1)
+    parser.add_argument("-max_lng", type=float, help="max_lng", default=-1)
+
+    parser.add_argument("-batch_traj_num", type=int, help="batch_traj_num", default=200)
+
+    parser.add_argument("-disc_path", type=str, help="discriminator path", default="./sets_disc")
+    parser.add_argument("-disc_name", type=str, help="discriminator name")
+    parser.add_argument("-newA_file", type=str, help="adjacency matrix path", default="None")
+    parser.add_argument("-shortest_org_idx", type=str, help="Shortest path index", default=999)
+    parser.add_argument("-shortest_new_idx", type=str, help="Shortest path index", default=0)
+
+    parser.add_argument("-shortest_data_path", type=str, help="shortest path", default="./shortest_path_data")
+
+    parser.add_argument("-except_scenario", type=str, help="except_scenario", default=None)
+    parser.add_argument("-reverse_weight", type=float, help="reverse_weight", default=1)
+
+    parser.add_argument("-guidance_scale", type=float, help="guidance_scale", default=1.)
+    parser.add_argument("-lam_ce", type=float, help="lam_ce", default=1.)
+    parser.add_argument("-lam_con", type=float, help="lam_con", default=1.)
+    parser.add_argument("-train_timestep_sampling", type=str, help="train_timestep_sampling", default="uniform")
+    parser.add_argument("-beta_schedule", type=str, help="beta_schedule", default="uniform")
+    parser.add_argument("-bool_prefix", help="bool_prefix", action="store_true")
+    parser.add_argument("-only_nll", help="bool_prefix", action="store_true")
+    parser.add_argument("-ret_org", help="ret_org", action="store_true")
+
+    parser.add_argument("-train_org_gen_path", type=str, help="train_gen_path", default=None)
+    parser.add_argument("-train_new_gen_path", type=str, help="train_gen_path", default=None)
+
+    parser.add_argument("-save_step", type=int, help="save_step", default=1)
+
+    # [Edit - Jiwoo]
+    parser.add_argument("-pretrained_model", type=str, help="model name", default=None)
+    parser.add_argument("-seed", type=int, help="seed numnber", default=1)
+    parser.add_argument("-save_iter", type=int, help="save_iter", default=0)
+    parser.add_argument("-n_importance_samples", type=int, help="number of importance samples", default=10)
+    parser.add_argument("-except_nll", help="except_nll", action="store_true")
+    parser.add_argument("-use_refinement", help="use_refinement", action="store_true")
+    parser.add_argument("-use_gnn", help="use_gnn", action="store_true")
+    parser.add_argument("-use_logit_reg", help="use logit regularization", action="store_true")
+    parser.add_argument("-planning_mode", type=str, help="planning mode", default="hybrid")
+    parser.add_argument("-data_subset_ratio", type=float, help="data ratio", default=1.0)
+    parser.add_argument("-finetune_diffusion", help="finetune_diffusion", action="store_true")
+    
+    return parser

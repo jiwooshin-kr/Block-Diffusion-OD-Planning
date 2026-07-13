@@ -1,0 +1,47 @@
+# Model checkpoints
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+
+# Data
+data/
+*.csv
+*.pkl
+*.npz
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# Experiment tracking / logs
+wandb/
+runs/
+logs/
+*.log
+
+# Experiment outputs (kept server-side; protected in sync.sh excludes too)
+sets_model/
+sets_res/
+sets_data/
+sets_disc/
+sets_log/
+
+# Data tensors (the two porto_data/*.ts committed initially stay tracked)
+*.ts
+!porto_data/porto_shrink_A_v3-0.1_normal.ts
+!porto_data/porto_shrink_A_v3-0.1_except_0.ts
+
+# Environment
+.env
+venv/
+.venv/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+*.patch
