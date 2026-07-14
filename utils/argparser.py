@@ -104,5 +104,40 @@ def get_argparser() -> argparse.ArgumentParser:
     parser.add_argument("-planning_mode", type=str, help="planning mode", default="hybrid")
     parser.add_argument("-data_subset_ratio", type=float, help="data ratio", default=1.0)
     parser.add_argument("-finetune_diffusion", help="finetune_diffusion", action="store_true")
-    
+
+    # [Edit - Jiwoo] O/D conditional generation
+    parser.add_argument("-od_cond", help="O/D conditional diffusion (EPSM_OD)", action="store_true")
+    parser.add_argument("-od_dropout", type=float, help="independent dropout rate for O and D conditions", default=0.1)
+
+    # [Edit - Jiwoo] LLaDA-style full-canvas <eos> length handling
+    parser.add_argument("-eos_mode", help="fixed canvas + <end> state predicted by the model (no length model)", action="store_true")
+    parser.add_argument("-eos_deg", type=float, help="total degree d of the virtual <end> state in the CTMC", default=0.05)
+    parser.add_argument("-eos_canvas_len", type=int, help="fixed canvas length L_max", default=64)
+
+    # [Edit - Jiwoo] conditional-generation ablations
+    parser.add_argument("-clean_prefix", help="A1: keep condition tokens clean (un-noised) during training and sampling", action="store_true")
+    parser.add_argument("-eos_loss_weight", type=float, help="A2: loss weight on <end>-target positions (1.0 = unweighted)", default=1.0)
+    parser.add_argument("-dst_token", help="A3: canvas = [dst, ori, v1, ...] with the destination as in-context token", action="store_true")
+
+    # [Edit - Jiwoo] A4: destination-matching losses
+    parser.add_argument("-dst_loss_weight", type=float, help="A4a: loss weight on the true endpoint position (1.0 = unweighted)", default=1.0)
+    parser.add_argument("-lam_arr", type=float, help="A4b: weight of the mean-field arrival loss -log sum_l p_l(D) p_{l+1}(<end>)", default=0.0)
+
+    # [Edit - Jiwoo] block diffusion (BD3-LM style)
+    parser.add_argument("-kernel", type=str, help="within-block noising kernel: mask | graph", default="graph")
+    parser.add_argument("-block_size", type=int, help="tokens per diffusion block", default=4)
+    parser.add_argument("-bd_hidden_dim", type=int, help="BD transformer hidden dim", default=256)
+    parser.add_argument("-bd_n_layers", type=int, help="BD transformer layers", default=6)
+    parser.add_argument("-bd_n_heads", type=int, help="BD transformer attention heads", default=8)
+    parser.add_argument("-bd_cond_dim", type=int, help="BD conditioning dim (time + OD)", default=128)
+    parser.add_argument("-bd_dropout", type=float, help="BD transformer dropout", default=0.1)
+    parser.add_argument("-bd_max_len", type=int, help="canvas cap (block multiple); 0 = od_max_len + 2", default=0)
+    parser.add_argument("-od_max_len", type=int, help="max generated path length", default=100)
+    parser.add_argument("-bd_time_cond", help="time conditioning for the mask kernel (graph kernel: always on)", action="store_true")
+    parser.add_argument("-bd_eos_deg", type=float, help="total degree d of the virtual <end> CTMC state (graph kernel)", default=0.05)
+    parser.add_argument("-length_mode", type=str, help="open | oracle | both (oracle only sets the block budget)", default="open")
+
+    # [Edit - Jiwoo] respaced (strided) sampling: fewer reverse steps via exact composed CTMC kernels
+    parser.add_argument("-sample_steps", type=int, help="number of reverse steps at sampling (0 = full max_T)", default=0)
+
     return parser

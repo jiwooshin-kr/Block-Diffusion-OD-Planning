@@ -141,6 +141,84 @@ class EPSM(nn.Module):
         x = self.final_conv(x)
         return x
 
+class EPSM_OD(EPSM):
+    """
+    O/D-conditional EPSM.
+
+    Global conditioning (same pattern as EPSM_SimTime): origin/destination
+    node embeddings pass through an MLP and are added to the time embedding.
+    The null condition token (index n_vertex) is used for condition dropout
+    during training, which also enables unconditional generation.
+    """
+
+    def __init__(self, n_vertex, x_emb_dim, dims, hidden_dim, device, pretrain_path=None):
+        super().__init__(n_vertex, x_emb_dim, dims, hidden_dim, device, pretrain_path=pretrain_path)
+        # Register UNet blocks as submodules so the optimizer trains them.
+        # Base EPSM keeps them in plain lists (unregistered = frozen at init);
+        # left untouched there to preserve baseline behavior.
+        self.down_blocks = nn.ModuleList(self.down_blocks)
+        self.up_blocks = nn.ModuleList(self.up_blocks)
+        time_dim = hidden_dim
+        self.null_idx = n_vertex
+        emb_dim = self.x_embedding.weight.shape[1]  # x_emb_dim may be overridden by pretrained node2vec
+        self.od_mlp = nn.Sequential(
+            nn.Linear(2 * emb_dim, 4 * time_dim, device=device),
+            nn.Mish(),
+            nn.Linear(4 * time_dim, time_dim, device=device),
+        )
+
+    def forward(self, xt_padded, lengths, t, od=None):
+        # xt_padded: shape b, h, each is a xt label
+        # t: shape b
+        # od: shape b, 2 = (origin, destination) node labels, null token = n_vertex
+        t = self.time_mlp(t)
+
+        if od is None:
+            od = torch.full((xt_padded.shape[0], 2), self.null_idx,
+                            dtype=torch.long, device=xt_padded.device)
+        od_emb = rearrange(self.x_embedding(od), "b n e -> b (n e)")
+        t = t + self.od_mlp(od_emb)
+
+        x = self.x_embedding(xt_padded)
+        hiddens = []
+        for k, down_block in enumerate(self.down_blocks):
+            x, h = down_block(x, lengths if k == 0 else None, t)
+            hiddens.append(h)
+
+        x = self.mid_block1(x, t)
+        x = self.mid_attn(x, None)
+        x = self.mid_block2(x, t)
+
+        for up_block in self.up_blocks:
+            x = torch.cat((x, hiddens.pop()), dim=-1)
+            x, _ = up_block(x, None, t)
+        x = self.final_conv(x)
+        return x
+
+
+class EPSM_OD_EOS(EPSM_OD):
+    """
+    EPSM_OD with the <end> state in the output vocabulary (LLaDA-style
+    full-canvas length handling): the head predicts n_vertex + 1 states
+    (real vertices + <end> = index n_vertex), so the model learns where
+    paths terminate and no external length model is needed.
+
+    The null condition token moves to n_vertex + 1 (<pad>) because
+    n_vertex now denotes a real diffusion state.
+    """
+
+    def __init__(self, n_vertex, x_emb_dim, dims, hidden_dim, device, pretrain_path=None):
+        super().__init__(n_vertex, x_emb_dim, dims, hidden_dim, device, pretrain_path=pretrain_path)
+        self.null_idx = n_vertex + 1
+        in_out_dim = [(a, b) for a, b in zip(dims, dims[1:])]
+        self.final_conv = nn.Sequential(
+            Conv1dBlock(in_out_dim[1][0], dims[0], kernel_size=5),
+            Rearrange("b h c -> b c h"),
+            nn.Conv1d(dims[0], n_vertex + 1, 1, device=device),
+            Rearrange("b c h -> b h c")
+        ).to(device)
+
+
 class EPSM_SimTime(nn.Module):
 
     def __init__(self, n_vertex, x_emb_dim, dims, hidden_dim, device, pretrain_path=None):

@@ -126,6 +126,34 @@ class Restorer(nn.Module):
         self.new_nll = False
         # [Edit-Jiwoo] ----------------------------------------
 
+        # [Edit-Jiwoo] O/D conditional generation ---------------
+        self.od_cond = getattr(args, "od_cond", False)
+        self.od_dropout = getattr(args, "od_dropout", 0.1)
+        # In eos_mode the destroyer state space is V+1 (last state = <end>),
+        # so self.n_vertex is already V+1 and the null token lands on <pad>.
+        self.null_idx = self.n_vertex
+        # [Edit-Jiwoo] ----------------------------------------
+
+        # [Edit-Jiwoo] <eos> full-canvas mode -------------------
+        # Paths are padded to a fixed canvas with the <end> state, which the
+        # model predicts like any other state (no external length model).
+        self.eos_mode = getattr(args, "eos_mode", False)
+        self.eos_canvas_len = getattr(args, "eos_canvas_len", 64)
+        self.eos_idx = self.n_vertex - 1 if self.eos_mode else None
+        # [Edit-Jiwoo] ----------------------------------------
+
+        # [Edit-Jiwoo] conditional-generation ablations ---------
+        # A1: condition tokens stay clean (never noised) when their condition
+        #     is active; A2: downweight <end>-target positions in the loss;
+        # A3: destination as in-context token at canvas position 0
+        self.clean_prefix = getattr(args, "clean_prefix", False)
+        self.eos_loss_weight = getattr(args, "eos_loss_weight", 1.0)
+        self.dst_token = getattr(args, "dst_token", False)
+        # A4: destination-matching losses
+        self.dst_loss_weight = getattr(args, "dst_loss_weight", 1.0)
+        self.lam_arr = getattr(args, "lam_arr", 0.0)
+        # [Edit-Jiwoo] ----------------------------------------
+
         self.args = args
 
         self.applying_mask_intermediate = False
@@ -138,6 +166,19 @@ class Restorer(nn.Module):
         if batch_size == 0:
             import pdb
             pdb.set_trace()
+
+        # [eos mode] O/D come from the raw path endpoints, then every path is
+        # padded to the fixed canvas with the <end> state so the tail is a
+        # normal training target.
+        raw_xs = xs
+        if self.eos_mode:
+            L = self.eos_canvas_len
+            if self.dst_token:
+                # A3: canvas = [dst, ori, v1, ..., <end>, ...]
+                xs = [torch.cat([x[-1:], x]) for x in xs]
+            xs = [torch.cat([x, torch.full((L - x.shape[0],), float(self.eos_idx), device=x.device, dtype=x.dtype)])
+                  if x.shape[0] < L else x[:L] for x in xs]
+
         lengths = torch.Tensor([x.shape[0] for x in xs]).long().to(self.device)
 
         # Sample timestep t
@@ -158,8 +199,31 @@ class Restorer(nn.Module):
         else:
             raise NotImplementedError(f"[seq_models.py] train_timestep_sampling not implemented: {self.args.train_timestep_sampling}")
         
+        # O/D condition from each path with independent condition dropout.
+        # Dropping O and D independently lets the model learn
+        # unconditional / O-only / D-only / O+D generation in one model.
+        od = None
+        drop = None
+        if self.od_cond:
+            od = torch.stack([torch.stack([x[0], x[-1]]) for x in raw_xs]).long().to(self.model_device)
+            if self.training and self.od_dropout > 0:
+                drop = torch.rand(od.shape, device=od.device) < self.od_dropout
+                od = od.masked_fill(drop, self.null_idx)
+
         # x_t ~ q(x_t | x_0)
         x_t = self.destroyer.diffusion(xs, ts, ret_distr=False)
+
+        # [A1/A3] keep condition tokens clean (never noised) when the
+        # corresponding condition is active for that sample
+        if self.clean_prefix and self.od_cond:
+            o_pos = 1 if self.dst_token else 0
+            for k in range(batch_size):
+                o_kept = drop is None or not bool(drop[k, 0])
+                d_kept = drop is None or not bool(drop[k, 1])
+                if self.dst_token and d_kept:
+                    x_t[k][0] = xs[k][0].long()
+                if o_kept:
+                    x_t[k][o_pos] = xs[k][o_pos].long()
 
         xt_padded = pad_sequence(x_t, batch_first=True, padding_value=0).long()
         xs_padded = pad_sequence(xs, batch_first=True, padding_value=0).long()
@@ -176,7 +240,7 @@ class Restorer(nn.Module):
         true_probs = rearrange(true_probs, "(b h) c -> b h c", h=horizon)
         
         # p_theta(x_0 | x_t, t)
-        x0_pred_logits = self.restore(xt_padded.to(self.model_device), lengths.to(self.model_device), ts.to(self.model_device))
+        x0_pred_logits = self.restore(xt_padded.to(self.model_device), lengths.to(self.model_device), ts.to(self.model_device), od=od)
         x0_pred_probs = F.softmax(x0_pred_logits, dim=-1)
 
         # Et_minus_one_bar_hat_x0 = \bar{E}_{t-1} @ \hat{x}_0
@@ -192,10 +256,49 @@ class Restorer(nn.Module):
         pred_logits = rearrange(pred_logits, "(b h) c -> b h c", h=horizon)
         
         eps = 0.000001
-        kl_loss = sum([F.kl_div(pred_logits[k][:l] + eps, true_probs[k][:l], reduction="batchmean") for k, l in enumerate(lengths)]) / batch_size
-        ce_loss = sum([F.cross_entropy(x0_pred_logits[k][:lengths[k]].to(x) + eps, x[:lengths[k]].long(), reduction="mean") for k, x in enumerate(xs)]) / batch_size
-        con_loss = -sum([((self.A @ (x0_pred_probs[k, 1:l, :] + eps).log().T).T * x0_pred_probs[k, :l-1, :]).mean() for k, l in enumerate(lengths)]) / batch_size
-        con_loss += -sum([((self.A @ (x0_pred_probs[k, :l-1, :] + eps).log().T).T * x0_pred_probs[k, 1:l, :]).mean() for k, l in enumerate(lengths)]) / batch_size
+        if self.eos_mode and (self.eos_loss_weight != 1.0 or self.dst_loss_weight != 1.0):
+            # [A2] downweight positions whose x_0 target is <end> so the eos
+            # tail (~2/3 of the canvas) does not dominate the objective
+            # [A4a] upweight each sample's true endpoint position (= destination)
+            lam = self.eos_loss_weight
+            s = 1 if self.dst_token else 0
+            kl_loss, ce_loss = 0., 0.
+            for k, l in enumerate(lengths):
+                tgt = xs[k][:l].long()
+                w = torch.where(tgt == self.eos_idx,
+                                torch.full((int(l),), lam, device=tgt.device),
+                                torch.ones(int(l), device=tgt.device))
+                if self.dst_loss_weight != 1.0:
+                    end_pos = s + raw_xs[k].shape[0] - 1
+                    if end_pos < int(l):
+                        w[end_pos] = self.dst_loss_weight
+                kl_pos = F.kl_div(pred_logits[k][:l] + eps, true_probs[k][:l], reduction="none").sum(-1)
+                kl_loss = kl_loss + (kl_pos * w.to(kl_pos)).sum() / w.sum()
+                ce_pos = F.cross_entropy(x0_pred_logits[k][:l].to(xs[k]) + eps, tgt, reduction="none")
+                ce_loss = ce_loss + (ce_pos * w.to(ce_pos)).sum() / w.sum()
+            kl_loss = kl_loss / batch_size
+            ce_loss = ce_loss / batch_size
+        else:
+            kl_loss = sum([F.kl_div(pred_logits[k][:l] + eps, true_probs[k][:l], reduction="batchmean") for k, l in enumerate(lengths)]) / batch_size
+            ce_loss = sum([F.cross_entropy(x0_pred_logits[k][:lengths[k]].to(x) + eps, x[:lengths[k]].long(), reduction="mean") for k, x in enumerate(xs)]) / batch_size
+
+        # [A4b] mean-field arrival loss: maximize the probability that the
+        # destination is immediately followed by <end> somewhere on the canvas.
+        # Folded into kl_loss so the trainer's loss combination is unchanged.
+        if self.eos_mode and self.lam_arr > 0:
+            arr_loss = 0.
+            for k in range(batch_size):
+                p = x0_pred_probs[k]
+                dv = int(raw_xs[k][-1].item())
+                arr_prob = (p[:-1, dv] * p[1:, self.eos_idx]).sum()
+                arr_loss = arr_loss + (-torch.log(arr_prob + eps))
+            kl_loss = kl_loss + self.lam_arr * (arr_loss / batch_size)
+
+        # [A3] the dst token at canvas position 0 is not part of the path, so
+        # the adjacency (connectivity) loss starts between positions 1 and 2
+        s = 1 if self.dst_token else 0
+        con_loss = -sum([((self.A @ (x0_pred_probs[k, s+1:l, :] + eps).log().T).T * x0_pred_probs[k, s:l-1, :]).mean() for k, l in enumerate(lengths)]) / batch_size
+        con_loss += -sum([((self.A @ (x0_pred_probs[k, s:l-1, :] + eps).log().T).T * x0_pred_probs[k, s+1:l, :]).mean() for k, l in enumerate(lengths)]) / batch_size
 
         if torch.isnan(kl_loss):
             print('kl_loss nan')
@@ -212,38 +315,106 @@ class Restorer(nn.Module):
         return kl_loss, ce_loss, con_loss * 100
          
 
-    def restore(self, xt_padded, lengths=None, ts=None):
+    def restore(self, xt_padded, lengths=None, ts=None, od=None):
         # Predicts logits of p_theta(x_0 | x_t, t)
         batch_size = xt_padded.shape[0]
 
         if ts is None:
             ts = torch.Tensor([self.max_T]).repeat(batch_size).to(self.device)
 
-        x0_pred_logits = self.eps_model(xt_padded, lengths, ts)
+        if self.od_cond:
+            # od=None falls back to the null token inside EPSM_OD (unconditional)
+            if od is not None:
+                od = od.to(self.model_device)
+            x0_pred_logits = self.eps_model(xt_padded, lengths, ts, od=od)
+        else:
+            x0_pred_logits = self.eps_model(xt_padded, lengths, ts)
         return x0_pred_logits
     
 
-    def sample(self, n_samples: int, batch_traj_num=200, real_paths=None, bool_prefix=False, ret_org=False):
-        assert hasattr(self, "gmm")
-        if real_paths is not None:
+    def sample(self, n_samples: int, batch_traj_num=200, real_paths=None, bool_prefix=False, ret_org=False, bool_od=False):
+        if self.eos_mode:
+            # Fixed canvas for every sample; length emerges from where the
+            # model places the <end> state (truncated below).
+            if real_paths is not None:
+                real_paths = sorted(real_paths, key=len)
+            lengths = torch.full((n_samples,), self.eos_canvas_len, dtype=torch.long, device=self.device)
+        elif real_paths is not None:
+            # Sort the paths themselves (not only lengths) so that each sample's
+            # length / prefix / od condition stay aligned to the same real path
+            assert hasattr(self, "gmm")
+            real_paths = sorted(real_paths, key=len)
             lengths = np.array([len(x) for x in real_paths])
+            lengths = torch.Tensor(lengths).long().to(self.device)
         else:
+            assert hasattr(self, "gmm")
             lengths = self.gmm.sample(n_samples)[0].reshape(-1).astype(int)
+            lengths = np.sort(lengths[lengths > 0])
+            lengths = torch.Tensor(lengths).long().to(self.device)
 
-        lengths = np.sort(lengths[lengths > 0])
-        lengths = torch.Tensor(lengths).long().to(self.device)
+        od_all = None
+        if bool_od:
+            assert self.od_cond, "bool_od requires a model trained with -od_cond"
+            assert real_paths is not None, "bool_od requires real_paths to provide (O, D) conditions"
+            od_all = torch.tensor([[p[0], p[-1]] for p in real_paths], dtype=torch.long, device=self.device)
+
+        dst_token = getattr(self, "dst_token", False)
+        if dst_token and bool_prefix and not bool_od:
+            raise ValueError("dst_token models clamp canvas position 0 to the destination; prefix-only sampling is not defined")
 
         n_batch = n_samples // batch_traj_num
         paths = []
         for b in range(n_batch):
-            if bool_prefix:
+            left, right = b * batch_traj_num, min((b + 1) * batch_traj_num, n_samples)
+            od = od_all[left: right] if od_all is not None else None
+            if dst_token and bool_od:
+                # canvas prefix = [dst] or [dst, ori]
+                if bool_prefix:
+                    prefix = np.array([[x[-1], x[0]] for x in real_paths])
+                else:
+                    prefix = np.array([[x[-1]] for x in real_paths])
+                paths.extend(self.sample_with_len(lengths[left: right], prefix=prefix[left: right], ret_org=ret_org, od=od))
+            elif bool_prefix:
                 prefix = np.array([x[0] for x in real_paths])
-                paths.extend(self.sample_with_len(lengths[b * batch_traj_num: min((b + 1) * batch_traj_num, n_samples)], prefix=prefix[b * batch_traj_num: min((b + 1) * batch_traj_num, n_samples)], ret_org=ret_org))
+                paths.extend(self.sample_with_len(lengths[left: right], prefix=prefix[left: right], ret_org=ret_org, od=od))
             else:
-                paths.extend(self.sample_with_len(lengths[b * batch_traj_num: min((b + 1) * batch_traj_num, n_samples)], ret_org=ret_org))
+                paths.extend(self.sample_with_len(lengths[left: right], ret_org=ret_org, od=od))
+
+        if self.eos_mode and not ret_org:
+            if dst_token:
+                # canvas position 0 is the dst token, not part of the path
+                paths = [p[1:] for p in paths]
+            paths = [self._truncate_eos(p) for p in paths]
         return paths
 
-    def sample_with_len(self, lengths, ret_distr=False, xt=None, T=None, ret_trace=False, prefix=None, ret_org=False):
+    def _truncate_eos(self, path):
+        # Cut at the first <end> state (exclusive)
+        for i, v in enumerate(path):
+            if v == self.eos_idx:
+                return path[:i]
+        return path
+
+    def _strided_schedule(self, n_steps):
+        """
+        Respaced sampling schedule. Returns [(t_hi, t_lo, Q_step), ...] from
+        t = max_T down to 0 in n_steps jumps, where Q_step = exp(G * sum(beta))
+        over (t_lo, t_hi] is the EXACT composed forward kernel (CTMC property
+        C_{a+b} = C_a C_b), indexed like self.Q: Q_step[:, x_t] = q(x_hi | .).
+        """
+        A = self.destroyer.A
+        G = (A - torch.diag(A.sum(dim=0))).to(A.device)
+        betas = self.destroyer.betas.to(A.device)
+        B = torch.cat([torch.zeros(1, device=A.device), betas.cumsum(0)])  # B[t] = sum_{s<=t} beta_s
+        ts = torch.linspace(self.max_T, 0, n_steps + 1).round().long().tolist()
+        # de-duplicate while keeping order (rounding can repeat values)
+        ts = [ts[0]] + [t for i, t in enumerate(ts[1:]) if t < ts[i]]
+        sched = []
+        for hi, lo in zip(ts[:-1], ts[1:]):
+            Q_step = torch.linalg.matrix_exp(G * (B[hi] - B[lo]).item())
+            sched.append((hi, lo, Q_step.to(self.device)))
+        return sched
+
+    def sample_with_len(self, lengths, ret_distr=False, xt=None, T=None, ret_trace=False, prefix=None, ret_org=False, od=None):
         # ============================================================
         # Setup
         # ============================================================
@@ -255,6 +426,12 @@ class Restorer(nn.Module):
 
         if T is None:
             T = self.max_T
+
+        # Respaced (strided) sampling: n_steps < max_T composed exact kernels
+        n_steps = int(getattr(self.args, "sample_steps", 0) or 0)
+        strided = None
+        if 0 < n_steps < T:
+            strided = self._strided_schedule(n_steps)
 
         n_samples = lengths.shape[0]
         horizon = max(lengths)
@@ -283,22 +460,35 @@ class Restorer(nn.Module):
             # ============================================================
             # Reverse diffusion sampling: x_T -> x_0
             # ============================================================
-            for t in range(T, 0, -1):
+            step_list = strided if strided is not None else [(t, t - 1, None) for t in range(T, 0, -1)]
+            for t, t_prev, Q_step in step_list:
                 ts = torch.Tensor([t]).long().to(self.device).repeat(n_samples)
 
                 # Apply prefix conditioning at the current timestep
                 if prefix is not None:
-                    prefix_t = self.destroyer.diffusion(prefix, ts, ret_distr=False)
-                    prefix_t = pad_sequence(prefix_t, batch_first=True, padding_value=0).long()
-                    # xt[:, 0:1] = prefix_t                 # org
-                    xt[:, :prefix_len] = prefix_t[:, :prefix_len]    # new
+                    if getattr(self, "clean_prefix", False):
+                        # [A1/A3] condition tokens are held clean, matching training
+                        xt[:, :prefix_len] = prefix[:, :prefix_len]
+                    else:
+                        prefix_t = self.destroyer.diffusion(prefix, ts, ret_distr=False)
+                        prefix_t = pad_sequence(prefix_t, batch_first=True, padding_value=0).long()
+                        # xt[:, 0:1] = prefix_t                 # org
+                        xt[:, :prefix_len] = prefix_t[:, :prefix_len]    # new
 
                 # Predict p_theta(x_0 | x_t)
-                x0_pred_logits = self.restore(xt, lengths, ts)
+                x0_pred_logits = self.restore(xt, lengths, ts, od=od)
+
+                # Classifier-free guidance: mix conditional / null-condition logits
+                w_cfg = getattr(self.args, "guidance_scale", 1.0)
+                if self.od_cond and od is not None and w_cfg != 1.0:
+                    x0_uncond_logits = self.restore(xt, lengths, ts, od=None)
+                    x0_pred_logits = x0_uncond_logits + w_cfg * (x0_pred_logits - x0_uncond_logits)
+
                 x0_pred_probs = F.softmax(x0_pred_logits, dim=-1)
 
-                # Approximate reverse posterior p(x_{t-1} | x_t)
-                EtXt = self.Q[t, :, xt.view(-1)].T
+                # Approximate reverse posterior p(x_{t_prev} | x_t); with
+                # respacing, Q_step is the exact composed kernel over (t_prev, t]
+                EtXt = (Q_step if Q_step is not None else self.Q[t])[:, xt.view(-1)].T
                 x0_pred_probs_rearrange = rearrange(x0_pred_probs, "b h c -> (b h) c", b=n_samples)
 
                 # Monte-Carlo estimate over predicted x_0 samples
@@ -306,7 +496,7 @@ class Restorer(nn.Module):
                 x0_sample = torch.multinomial(x0_pred_probs_rearrange, num_samples=num_mc_samples, replacement=True)
                 x0_sample = rearrange(x0_sample, "(b h) n -> b h n", b=n_samples, n=num_mc_samples)
 
-                Et_minus_one_bar_hat_x0 = self.matrices[t - 1, x0_sample.view(-1)]
+                Et_minus_one_bar_hat_x0 = self.matrices[t_prev, x0_sample.view(-1)]
                 Et_minus_one_bar_hat_x0 = rearrange(Et_minus_one_bar_hat_x0, "(b h n) d -> (b h) n d", b=n_samples, n=num_mc_samples)
                 Et_minus_one_bar_hat_x0 = Et_minus_one_bar_hat_x0.mean(dim=1)
 
@@ -363,13 +553,20 @@ class Restorer(nn.Module):
                 if prefix is not None:
                     # x[:, 0:1] = prefix        # org
                     x[:, :prefix_len] = prefix  # new
-                    start_k = prefix_len
+                    filled = prefix_len
                 else:
                     x_mask = x0_pred_probs[:, 0].clone()
                     if (self.A.sum(dim=1)==0).sum() != 0:
                         x_mask[:, self.A.sum(dim=1)==0] = 0.
                     x[:, 0] = torch.multinomial(x_mask, 1).view(-1)
-                    start_k = 1
+                    filled = 1
+
+                # [A3] canvas position 0 is the dst token: the adjacency chain
+                # starts between positions 1 and 2; unfilled pre-chain
+                # positions are sampled freely from p(x_0)
+                start_k = max(filled, 2) if getattr(self, "dst_token", False) else filled
+                for k in range(filled, start_k):
+                    x[:, k] = torch.multinomial(x0_pred_probs[:, k], 1).view(-1)
 
                 # Generate topologically valid trajectory
                 for k in range(start_k, horizon):

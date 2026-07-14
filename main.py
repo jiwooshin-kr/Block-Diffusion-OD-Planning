@@ -46,7 +46,7 @@ if __name__ == "__main__":
     # set model
     if args.method == "seq":
         from models_seq.seq_models import Destroyer, Restorer
-        from models_seq.eps_models import EPSM, EPSM_SimTime
+        from models_seq.eps_models import EPSM, EPSM_SimTime, EPSM_OD, EPSM_OD_EOS
         from models_seq.trainer import Trainer
 
         suffix = args.d_name
@@ -60,14 +60,38 @@ if __name__ == "__main__":
             betas = args.beta_lb + (args.beta_ub - args.beta_lb) * sss
         else:
             raise NotImplementedError
-        destroyer = Destroyer(dataset.A, betas, args.max_T, device)
+        if args.eos_mode:
+            # LLaDA-style: augment the CTMC state space with one virtual <end>
+            # state (index V) with total degree eos_deg, split evenly across all
+            # vertices. Symmetric => the uniform limiting distribution over V+1
+            # states is preserved. The self-loop keeps <end> -> <end> legal in
+            # the binarized decode / connectivity loss (no effect on the CTMC).
+            V = dataset.n_vertex
+            w = args.eos_deg / V
+            A_aug = torch.zeros(V + 1, V + 1)
+            A_aug[:V, :V] = dataset.A.cpu().float()
+            A_aug[:V, V] = w
+            A_aug[V, :V] = w
+            A_aug[V, V] = w
+            destroyer = Destroyer(A_aug, betas, args.max_T, device)
+        else:
+            destroyer = Destroyer(dataset.A, betas, args.max_T, device)
         pretrain_path = join(args.path, f"{args.d_name}_node2vec.pkl")
         dims = eval(args.dims)
 
-        ######################################################## unconditional EPSM ####################################################################
+        ######################################################## unconditional / O,D-conditional EPSM ##################################################
         if not args.sim_time:
-            eps_model = EPSM(dataset.n_vertex, x_emb_dim=args.x_emb_dim, dims=dims, device=device,
-                            hidden_dim=args.hidden_dim, pretrain_path=pretrain_path)
+            if args.od_cond and args.eos_mode:
+                print(f"O/D conditional EPSM with <end> state (EPSM_OD_EOS), eos_deg={args.eos_deg}, canvas={args.eos_canvas_len}")
+                eps_model = EPSM_OD_EOS(dataset.n_vertex, x_emb_dim=args.x_emb_dim, dims=dims, device=device,
+                                hidden_dim=args.hidden_dim, pretrain_path=pretrain_path)
+            elif args.od_cond:
+                print("O/D conditional EPSM (EPSM_OD)")
+                eps_model = EPSM_OD(dataset.n_vertex, x_emb_dim=args.x_emb_dim, dims=dims, device=device,
+                                hidden_dim=args.hidden_dim, pretrain_path=pretrain_path)
+            else:
+                eps_model = EPSM(dataset.n_vertex, x_emb_dim=args.x_emb_dim, dims=dims, device=device,
+                                hidden_dim=args.hidden_dim, pretrain_path=pretrain_path)
             model = Restorer(eps_model, destroyer, device, args)
             trainer = Trainer(model, dataset, args.model_path, args.model_name, args=args)
         ##################################################################################################################################################
@@ -181,8 +205,20 @@ if __name__ == "__main__":
         # [Edit - Jiwoo] ----------------------------------------------------------------
 
     if args.method != "plan":
-        gen_paths = model.sample(args.eval_num)
         real_paths = dataset.get_real_paths(args.eval_num)
+        if args.od_cond:
+            # O/D conditional generation: real (O, D, length) from test paths,
+            # O clamped as prefix during sampling, D given only as condition (soft)
+            real_paths = sorted(real_paths, key=len)
+            gen_paths = model.sample(args.eval_num, real_paths=real_paths, bool_prefix=True, bool_od=True)
+            n_gen = max(len(gen_paths), 1)
+            o_match = sum(1 for g, r in zip(gen_paths, real_paths) if len(g) > 0 and g[0] == r[0])
+            d_reach = sum(1 for g, r in zip(gen_paths, real_paths) if len(g) > 0 and g[-1] == r[-1])
+            print("============================================================")
+            print(f"O match rate: {o_match / n_gen:.4f}, D reach rate: {d_reach / n_gen:.4f} (n={len(gen_paths)})")
+            print("============================================================")
+        else:
+            gen_paths = model.sample(args.eval_num)
         torch.save(gen_paths, join(args.model_path, "gen_paths.pth"))
         evaluator = Evaluator(real_paths, gen_paths, model, n_vertex, dataset=dataset,
                               name=join(args.res_path, f"{args.model_name}_pure_gen"), sim_time = args.sim_time)
