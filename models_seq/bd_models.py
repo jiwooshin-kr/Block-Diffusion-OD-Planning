@@ -794,6 +794,353 @@ class BlockDiffusion(nn.Module):
             prev = tok
 
     # -----------------------------------------------------------------
+    # Importance-weight guidance (mask kernel; BD_GUIDANCE_FORMULATION.pdf)
+    # -----------------------------------------------------------------
+    @torch.no_grad()
+    def plan_guided(self, origs, dests, disc, adj_scn, deg_ratio, n_is=100,
+                    w_gamma=1.0, cand_temp=1.0, guidance_scale=None,
+                    disc_micro_bs=4096, ess_log=None, adj_prop=False, **kwargs):
+        """plan() with discriminator importance-weight guidance at every
+        first-hitting reveal. Mask kernel only. disc: BDDiscriminator or None
+        (None + adj_prop=True -> pure adjacency-constrained sampling, the
+        unguided control of BD_GUIDANCE_FORMULATION.pdf Lemma 3).
+        adj_prop: mask candidate proposals to scenario-legal transitions
+        w.r.t. REVEALED neighbours (Lemma 3: exact under the ideal D --
+        the excluded candidates carry zero target weight).
+        adj_scn (V, V) float, deg_ratio (V,) float on self.device.
+        ess_log: optional list collecting per-reveal mean ESS.
+        Kernel dispatch: mask -> guided first-hitting reveal; graph -> guided
+        T-step CTMC reverse (the GDP formulation: the MC-posterior x0-hat is
+        replaced by the D/(1-D)-weighted candidate average x0-bar; with
+        adj_prop the final adjacency-constrained decode runs on the SCENARIO
+        adjacency instead of the training graph)."""
+        if guidance_scale is None:
+            guidance_scale = getattr(self.args, "guidance_scale", 1.0)
+        w = float(guidance_scale)
+
+        if type(origs) is list:
+            origs = torch.Tensor(origs)
+        if type(dests) is list:
+            dests = torch.Tensor(dests)
+        origs = origs.long().to(self.device)
+        dests = dests.long().to(self.device)
+        b = origs.shape[0]
+        block = self.block_size
+        max_blocks = self.bd_max_len // block
+
+        stop_idx = torch.full((b,), -1, dtype=torch.long)
+        end_idx = torch.full((b,), -1, dtype=torch.long)
+        pfx = self.pfx
+        prefix_vals = [(0, dests), (1, origs)]
+        seq = torch.empty(b, 0, dtype=torch.long, device=self.device)
+        for j in range(max_blocks):
+            seq = torch.cat([seq, self._init_block(b)], dim=1)
+            s = seq.shape[1]
+            lo = s - block
+            for p_idx, val in prefix_vals:
+                if lo <= p_idx < s:
+                    seq[:, p_idx] = val
+            if s > pfx:
+                if self.kernel == "mask":
+                    self._denoise_block_mask_guided(
+                        seq, origs, dests, w, disc, adj_scn, deg_ratio,
+                        n_is, w_gamma, cand_temp, disc_micro_bs, ess_log,
+                        adj_prop=adj_prop)
+                else:
+                    self._denoise_block_graph_guided(
+                        seq, origs, dests, w, disc, adj_scn, deg_ratio,
+                        n_is, w_gamma, cand_temp, disc_micro_bs, ess_log,
+                        adj_prop=adj_prop)
+
+            lo = max(pfx, s - block)
+            block_tokens = seq[:, lo:s].cpu()
+            for i in range(b):
+                if stop_idx[i] >= 0 or end_idx[i] >= 0:
+                    continue
+                d = int(dests[i].item())
+                for k, tok in enumerate(block_tokens[i].tolist()):
+                    if tok == d:
+                        stop_idx[i] = lo + k
+                        break
+                    if tok in (self.END, self.PAD, self.MASK):
+                        end_idx[i] = lo + k
+                        break
+            if bool(((stop_idx >= 0) | (end_idx >= 0)).all()):
+                break
+
+        seq = seq.cpu()
+        o = pfx - 1
+        paths, self.last_hits, self.last_patch_lens = [], [], []
+        for i in range(b):
+            if stop_idx[i] >= 0:
+                paths.append(seq[i, o:stop_idx[i] + 1].tolist())
+                self.last_hits.append(True)
+                self.last_patch_lens.append(0)
+                continue
+            hi = int(end_idx[i].item()) if end_idx[i] >= 0 else seq.shape[1]
+            paths.append([t for t in seq[i, o:hi].tolist() if t < self.n_vertex])
+            self.last_hits.append(False)
+            self.last_patch_lens.append(0)
+        return paths
+
+    def _disc_lengths(self, x, dests):
+        """Truncation lengths for disc input: cut before END/PAD/MASK, cut
+        after dst (inclusive), scanning positions >= pfx. x: (m, s), dests (m,)."""
+        m, s = x.shape
+        pos = torch.arange(s, device=x.device)[None]
+        term = (x >= self.n_vertex) & (pos >= self.pfx)
+        hit = (x == dests[:, None]) & (pos >= self.pfx)
+        ev = term | hit
+        any_ev = ev.any(dim=1)
+        idx = torch.argmax(ev.float(), dim=1)
+        ar = torch.arange(m, device=x.device)
+        length = torch.where(any_ev, idx + hit[ar, idx].long(),
+                             torch.full_like(idx, s))
+        return length.clamp(min=2)
+
+    def _denoise_block_mask_guided(self, seq, origs, dests, w, disc, adj_scn,
+                                   deg_ratio, n_is, w_gamma, cand_temp,
+                                   micro_bs, ess_log, adj_prop=False):
+        """First-hitting reveal where the reveal-target x0-bar is the
+        D/(1-D)-reweighted candidate average (Eqs. 3+5 of the guidance doc)."""
+        b, s = seq.shape
+        block = self.block_size
+        V = self.backbone.vocab_size
+        attn = get_block_causal_mask(s, block, self.device)
+        arange = torch.arange(b, device=self.device)
+        PAD_D = disc.PAD if disc is not None else 0
+
+        t = torch.ones(b, device=self.device)
+        while True:
+            masked = seq[:, -block:] == self.MASK
+            active = masked.any(dim=1)
+            if not bool(active.any()):
+                break
+            num_masked = masked.sum(dim=1).clamp(min=1)
+            u = torch.rand(b, device=self.device)
+            t = t * u ** (1.0 / num_masked.float())
+
+            logits = self._cfg_logits(seq, self._t_input(b, s, t * 100.0), origs, dests, attn, w)
+            block_logits = logits[:, -block:].clone()
+            block_logits[..., self.MASK] = -1e9
+            p_x0 = block_logits.softmax(dim=-1)                       # (b, block, V)
+            p_cand = (block_logits / cand_temp).softmax(dim=-1) if cand_temp != 1.0 else p_x0
+
+            if adj_prop:
+                # Lemma 3 legality mask from REVEALED neighbours only.
+                # left neighbour of block position j is canvas position lo+j-1
+                # (committed block or already-revealed token); right neighbour
+                # is lo+j+1 when inside the current sequence.
+                lo = s - block
+                m = torch.ones_like(p_cand)                       # (b, block, V)
+                nv = self.n_vertex
+                left = seq[:, lo - 1:s - 1] if lo >= 1 else torch.cat(
+                    [torch.full((b, 1), self.MASK, dtype=seq.dtype, device=seq.device),
+                     seq[:, :s - 1]], dim=1)                      # (b, block)
+                right = torch.cat([seq[:, lo + 1:s],
+                                   torch.full((b, 1), self.MASK, dtype=seq.dtype,
+                                              device=seq.device)], dim=1)
+                lv = (left < nv)                                  # real revealed vertex
+                if lo == 0:  # canvas pos 0 (dst prefix) is not a traversal
+                    lv[:, :2] = False
+                    lv[:, 2:] &= True
+                rv = (right < nv)
+                lsafe = torch.where(lv, left, torch.zeros_like(left))
+                rsafe = torch.where(rv, right, torch.zeros_like(right))
+                m_left = adj_scn[lsafe.reshape(-1)].view(b, block, -1)
+                m_right = adj_scn[rsafe.reshape(-1)].view(b, block, -1)
+                m[..., :nv] = torch.where(lv.unsqueeze(-1), m_left, torch.ones_like(m_left)) \
+                    * torch.where(rv.unsqueeze(-1), m_right, torch.ones_like(m_right))
+                pm = p_cand * m
+                z = pm.sum(-1, keepdim=True)
+                p_cand = torch.where(z > 1e-9, pm / z.clamp(min=1e-9), p_cand)
+
+            if disc is None:
+                # unguided adjacency-constrained control: reveal directly from
+                # the (masked) marginal at one uniformly-chosen masked position
+                sel_probs = masked.float()
+                sel_probs[~active] = 1.0
+                idx = torch.multinomial(sel_probs, 1).squeeze(1)
+                p_sel = p_cand[arange, idx].clamp(min=1e-12)
+                tok = torch.multinomial(p_sel, 1).squeeze(1)
+                pos = s - block + idx
+                seq[arange[active], pos[active]] = tok[active]
+                continue
+
+            # ---- mean-field candidates: (b, n, block) ----------------
+            cand = torch.multinomial(
+                p_cand.reshape(b * block, V), n_is, replacement=True
+            ).view(b, block, n_is).permute(0, 2, 1).contiguous()
+            cur = seq[:, -block:].unsqueeze(1).expand(b, n_is, block)
+            cand = torch.where(masked.unsqueeze(1), cand, cur)
+
+            # ---- disc scoring of [prefix || candidate block] ----------
+            full = seq.unsqueeze(1).expand(b, n_is, s).clone()
+            full[:, :, -block:] = cand
+            full = full.view(b * n_is, s)
+            d_rep = dests.repeat_interleave(n_is)
+            lens = self._disc_lengths(full, d_rep)
+            x_disc = torch.where(
+                torch.arange(s, device=full.device)[None] < lens[:, None],
+                full, torch.full_like(full, PAD_D))
+            x_disc = torch.where(x_disc >= self.n_vertex,
+                                 torch.full_like(x_disc, PAD_D), x_disc)
+
+            dlogits = torch.empty(b * n_is, device=self.device)
+            for lo_i in range(0, b * n_is, micro_bs):
+                hi_i = min(lo_i + micro_bs, b * n_is)
+                dlogits[lo_i:hi_i] = disc(x_disc[lo_i:hi_i], lens[lo_i:hi_i],
+                                          adj_scn, deg_ratio)
+            dlogits = dlogits.view(b, n_is)
+
+            # self-normalized weights (row-max shift for stability) + ESS
+            g = w_gamma * dlogits
+            wgt = torch.exp(g - g.max(dim=1, keepdim=True).values)     # (b, n)
+            if ess_log is not None:
+                ess = (wgt.sum(1) ** 2 / (wgt ** 2).sum(1).clamp(min=1e-12))
+                ess_log.append(float(ess[active].mean().item()) if bool(active.any()) else float("nan"))
+
+            # ---- reweighted reveal target x0-bar ----------------------
+            idx_flat = cand.permute(0, 2, 1).reshape(b * block, n_is)   # (b*block, n)
+            w_flat = wgt.unsqueeze(1).expand(b, block, n_is).reshape(b * block, n_is)
+            xbar = torch.zeros(b * block, V, device=self.device)
+            xbar.scatter_add_(1, idx_flat, w_flat)
+            xbar_sum = xbar.sum(1, keepdim=True)
+            xbar = torch.where(xbar_sum > 1e-12, xbar / xbar_sum.clamp(min=1e-12),
+                               p_cand.reshape(b * block, V))
+            xbar = xbar.view(b, block, V)
+
+            # ---- reveal ONE uniformly-chosen masked position ----------
+            sel_probs = masked.float()
+            sel_probs[~active] = 1.0
+            idx = torch.multinomial(sel_probs, 1).squeeze(1)
+            p_sel = xbar[arange, idx].clamp(min=0)
+            p_sel = torch.where(p_sel.sum(1, keepdim=True) > 1e-12, p_sel,
+                                p_cand[arange, idx])
+            tok = torch.multinomial(p_sel.clamp(min=1e-12), 1).squeeze(1)
+            pos = s - block + idx
+            upd = active
+            seq[arange[upd], pos[upd]] = tok[upd]
+
+
+    def _denoise_block_graph_guided(self, seq, origs, dests, w, disc, adj_scn,
+                                    deg_ratio, n_is, w_gamma, cand_temp,
+                                    micro_bs, ess_log, adj_prop=False):
+        """Guided T-step CTMC reverse for the uniform (graph) kernel.
+        Per step: mean-field candidates from x0-hat, D/(1-D) weights on
+        [prefix || candidate block], reweighted x0-bar drives the posterior
+        (Eqs. 1-3 of the guidance doc with the CTMC posterior). disc=None ->
+        unguided x0-hat (adj-only control). The final adjacency-constrained
+        walk uses the scenario adjacency when adj_prop=True."""
+        b, s = seq.shape
+        block = self.block_size
+        V0 = self.V_states
+        attn = get_block_causal_mask(s, block, self.device)
+        lo = s - block
+        pfx = self.pfx
+        clamp_prefix = lo == 0
+        arange = torch.arange(b, device=seq.device)
+        PAD_D = disc.PAD if disc is not None else 0
+
+        def _pin_tokens():
+            seq[:, 0] = dests
+            seq[:, 1] = origs
+
+        def _pin_probs(probs):
+            probs[:, 0] = 0.0
+            probs[arange, 0, dests] = 1.0
+            probs[:, 1] = 0.0
+            probs[arange, 1, origs] = 1.0
+
+        xbar = None
+        for t in range(self.max_T, 0, -1):
+            if clamp_prefix:
+                _pin_tokens()
+            logits = self._cfg_logits(seq, self._t_input(b, s, float(t)), origs, dests, attn, w)
+            logits_v = logits[:, -block:, :V0] / cand_temp
+            x0_probs = F.softmax(logits_v, dim=-1)                 # (b, block, V0)
+            if clamp_prefix:
+                _pin_probs(x0_probs)
+
+            if disc is None:
+                xbar = x0_probs
+            else:
+                cand = torch.multinomial(
+                    x0_probs.reshape(b * block, V0).clamp(min=1e-12), n_is, replacement=True
+                ).view(b, block, n_is).permute(0, 2, 1).contiguous()   # (b, n, block)
+                full = seq.unsqueeze(1).expand(b, n_is, s).clone()
+                full[:, :, -block:] = cand
+                full = full.view(b * n_is, s)
+                d_rep = dests.repeat_interleave(n_is)
+                lens = self._disc_lengths(full, d_rep)
+                x_disc = torch.where(
+                    torch.arange(s, device=full.device)[None] < lens[:, None],
+                    full, torch.full_like(full, PAD_D))
+                x_disc = torch.where(x_disc >= self.n_vertex,
+                                     torch.full_like(x_disc, PAD_D), x_disc)
+                dlogits = torch.empty(b * n_is, device=self.device)
+                for lo_i in range(0, b * n_is, micro_bs):
+                    hi_i = min(lo_i + micro_bs, b * n_is)
+                    dlogits[lo_i:hi_i] = disc(x_disc[lo_i:hi_i], lens[lo_i:hi_i],
+                                              adj_scn, deg_ratio)
+                g = w_gamma * dlogits.view(b, n_is)
+                wgt = torch.exp(g - g.max(dim=1, keepdim=True).values)
+                if ess_log is not None:
+                    ess = (wgt.sum(1) ** 2 / (wgt ** 2).sum(1).clamp(min=1e-12))
+                    ess_log.append(float(ess.mean().item()))
+
+                idx_flat = cand.permute(0, 2, 1).reshape(b * block, n_is)
+                w_flat = wgt.unsqueeze(1).expand(b, block, n_is).reshape(b * block, n_is)
+                xbar = torch.zeros(b * block, V0, device=self.device)
+                xbar.scatter_add_(1, idx_flat, w_flat)
+                xs = xbar.sum(1, keepdim=True)
+                xbar = torch.where(xs > 1e-12, xbar / xs.clamp(min=1e-12),
+                                   x0_probs.reshape(b * block, V0))
+                xbar = xbar.view(b, block, V0)
+                if clamp_prefix:
+                    _pin_probs(xbar)
+
+            # CTMC posterior with the (reweighted) x0-bar
+            xb = seq[:, -block:]
+            EtXt = self.Q[t, :, xb.reshape(-1)].T                   # (b*block, V0)
+            Em1 = torch.matmul(xbar, self.matrices[t - 1])          # (b, block, V0)
+            pred_unorm = EtXt * Em1.reshape(b * block, V0)
+            sum_p = torch.clamp(pred_unorm.sum(1, keepdim=True), min=1e-8)
+            pred = pred_unorm / sum_p
+            pred[(sum_p == 1e-8)[:, 0]] = 1.0 / V0
+            seq[:, -block:] = torch.multinomial(pred, 1).view(b, block)
+
+        # final adjacency-constrained decode (scenario adjacency if adj_prop)
+        if adj_prop:
+            A_dec = torch.zeros(V0, V0, device=self.device)
+            V = self.n_vertex
+            A_dec[:V, :V] = adj_scn
+            A_dec[V, :] = 1.0
+            A_dec[:, V] = 1.0
+        else:
+            A_dec = self.A
+        if clamp_prefix:
+            _pin_tokens()
+            start = pfx
+        else:
+            start = 0
+        if start >= block:
+            return
+        prev = seq[:, lo + start - 1]
+        for k in range(start, block):
+            probs_k = xbar[:, k]
+            masked_prob = A_dec[prev] * probs_k
+            bad = masked_prob.sum(-1) < 1e-6
+            masked_prob[bad] = 1.0
+            masked_prob = A_dec[prev] * masked_prob
+            still_bad = masked_prob.sum(-1) <= 0
+            if bool(still_bad.any()):
+                masked_prob[still_bad] = 1.0
+            tok = torch.multinomial(masked_prob, 1).view(-1)
+            seq[:, s - block + k] = tok
+            prev = tok
+
+    # -----------------------------------------------------------------
     def _refine_to_dest(self, seq, dst, max_patch=None):
         """Append a shortest-path patch from the last vertex to dst."""
         try:

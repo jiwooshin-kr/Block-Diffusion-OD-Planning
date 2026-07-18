@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BD3-LM Reference Code Summary &amp; Implementation Comparison</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    font-size: 10.5px; line-height: 1.6; color: #1a1a1a; margin: 0;
+  }
+  h1 { font-size: 19px; border-bottom: 3px solid #1a1a1a; padding-bottom: 8px; margin: 0 0 14px; }
+  h2 { font-size: 14.5px; margin: 26px 0 10px; padding-bottom: 4px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 12px; margin: 18px 0 6px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.3px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.8px; line-height: 1.5;
+        background: #f7f7f7; border: 1px solid #ddd; border-radius: 5px; padding: 8px 10px;
+        overflow-x: hidden; white-space: pre-wrap; margin: 6px 0; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.6px; }
+  th, td { border: 1px solid #bbb; padding: 4px 7px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  .status-box { background: #fff8e6; border: 1.5px solid #e6c260; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .ok   { color: #0a7a2f; font-weight: 700; }
+  .diff { color: #b25000; font-weight: 700; }
+  .add  { color: #0b5bd3; font-weight: 700; }
+  .warn { color: #b00020; font-weight: 700; }
+  .small { font-size: 9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .pagebreak { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>BD3-LM Reference Code Summary &amp; Implementation Comparison</h1>
+<p class="small">2026-07-16 · Reference: <span class="mono">github.com/kuleshov-group/bd3lms</span> (Arriola et al., "Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models", ICLR 2025) · Local: <span class="mono">models_seq/bd_models.py</span>, <span class="mono">models_seq/bd_trainer.py</span>, <span class="mono">main_bd.py</span></p>
+
+<div class="status-box">
+<b>What "passed the comparison verification" means, precisely.</b> The reference repository was cloned and the five core components of the mask kernel (attention mask, vectorized training, SUBS loss, first-hitting sampler, semi-AR generation loop) were compared side-by-side at the code level; <b>all five compute the same mathematics and algorithms as the original</b>. What this verification does <u>not</u> mean: (1) no numerical-equivalence test was run (loading identical weights into both implementations and diffing outputs is impossible — the two codebases use different vocabularies and conditioning); (2) it does not mean every feature of the original was ported — EMA, clipped schedules, etc. were deliberately dropped and are all listed in §4; (3) the graph (uniform-state) kernel was never meant to be a bd3lms port — it is this repository's own design applying the <span class="mono">seq_models.py</span> loss per block (per CLAUDE.md instructions).
+</div>
+
+<h2>1. The problem BD3-LM solves, and the core idea</h2>
+<p><b>Background.</b> Autoregressive (AR) models achieve high likelihood and fast KV-cached decoding but must emit tokens strictly one at a time. Discrete diffusion (e.g. MDLM) allows parallel generation but lags in likelihood and is tied to a fixed-length canvas, making variable-length generation awkward. BD3-LM <b>interpolates between the two at the block level</b>.</p>
+<p><b>Block decomposition.</b> The sequence is split into blocks of size B; the likelihood factorizes autoregressively across blocks while each block's interior is modeled by masked discrete diffusion:</p>
+<pre>log p(x) = Σ_b log p(x^b | x^{&lt;b})          ← across blocks: autoregressive
+p(x^b | x^{&lt;b}) : within a block: discrete diffusion (NELBO conditioned on previous blocks)</pre>
+<ul>
+<li>B = 1 recovers pure AR; B = sequence length recovers pure diffusion — <b>block size is the AR↔diffusion interpolation knob</b>.</li>
+<li>Generation is semi-autoregressive: finish one block by diffusion, commit it, append the next noised block. This structure is what enables <b>variable-length generation</b> and a <b>cross-block KV cache</b>.</li>
+</ul>
+
+<h2>2. Key parts of the reference code (by file / function)</h2>
+
+<h3>2.1 Vectorized training — all blocks in one forward pass</h3>
+<p><span class="mono">diffusion.py :: _forward_pass_diffusion</span>. A naive implementation would need one forward per block (cost × number of blocks). BD3-LM instead feeds the <b>concatenation [x<sub>t</sub> ‖ x<sub>0</sub>] (length 2n)</b> in a single pass and controls information flow with a specialized attention mask. The noise level t is <b>sampled independently per block</b> (<span class="mono">_sample_t</span>: one uniform sample per block, then <span class="mono">repeat_interleave</span>).</p>
+
+<h3>2.2 The specialized attention mask — OR of three sub-masks</h3>
+<p><span class="mono">models/hf/modeling_bd3lm.py :: block_diff_mask</span>. Each query/key is classified by which half it lives in (x0_flag) and its block index:</p>
+<pre>M_BD  (block diagonal)      : same half &amp; same block            → self-attention inside a noised block
+M_OBC (offset block causal) : x_t query → x_0 keys of strictly earlier blocks → clean context conditioning
+M_BC  (block causal)        : x_0 query → x_0 keys of earlier-or-equal blocks → updates clean (cacheable) states
+mask = M_BD | M_OBC | M_BC</pre>
+
+<h3>2.3 Loss — MDLM-style NELBO with SUBS parameterization</h3>
+<p><span class="mono">diffusion.py :: _subs_parameterization, _loss</span>. The denoiser predicts x̂<sub>0</sub> (logits over the vocabulary). SUBS (a) <b>forces the MASK token's probability to zero</b> (<span class="mono">logits[:,:,mask_index] = -inf</span>), and (b) <b>carries over already-revealed (unmasked) positions</b> as one-hot (their log-prob becomes 0 → no loss contribution). Under the log-linear schedule the NELBO reduces to a simple weighted CE:</p>
+<pre>L = E_{t~U[ε,1]} [ -(1/t) · Σ_{masked ℓ} log p_θ(x_0^ℓ | x_t) ]     (t independent per block)</pre>
+
+<h3>2.4 Sampling — semi-AR loop + first-hitting sampler</h3>
+<p><span class="mono">diffusion.py :: _semi_ar_sampler, _ddpm_caching_update</span>. The outer loop appends one block at a time; the inner loop denoises the current block. The first-hitting sampler (the equivalent, faster sampler of Zheng et al. 2025) jumps directly to the time at which the next token is revealed:</p>
+<pre>u ~ U(0,1);  t ← t · u^(1/num_masked)      ← first-hitting time update
+p_x0 = softmax(denoiser(x));  pick ONE masked position uniformly, sample it from p_x0</pre>
+<p>→ one forward pass per revealed token; a block finishes in exactly B reveals. On top of this sit nucleus (top-p) sampling, KV-cache storage once a block completes, and EOS/entropy-based stopping (<span class="mono">_check_stop_conds</span>).</p>
+
+<h3>2.5 Variance reduction — the paper's key training techniques</h3>
+<ul>
+<li><b>Clipped noise schedules</b> (<span class="mono">config.algo.var_min=True</span>, on by default): t is sampled only from an interval [ε_min, ε_max] ⊂ [0,1]. During training the interval that <b>minimizes the variance</b> of the validation loss is searched periodically (<span class="mono">_clipped_schedule_search</span>, delta 0.05). This is a headline contribution of the paper — it substantially reduces gradient variance and improves perplexity, and <b>matters most at small block sizes</b>.</li>
+<li><b>Antithetic t sampling</b>: stratifies t across the batch and blocks to reduce estimator variance.</li>
+<li><b>EMA</b> (0.9999): an exponential moving average of the weights is used for evaluation and generation.</li>
+</ul>
+
+<h3>2.6 Backbone — DDiT (rotary + adaLN)</h3>
+<p><span class="mono">modeling_bd3lm.py :: DDiTBlock</span>. Pre-LN transformer with <b>rotary position embeddings</b>; the noise level σ is embedded by a <span class="mono">TimestepEmbedder</span> and injected via <b>adaLN</b> (zero-init; 6 modulations per block: shift/scale/gate × attn/MLP). For masked diffusion, however, masked tokens themselves reveal the noise level, so <b>time conditioning is effectively unnecessary</b> (stated in the paper), and the conditioning vector c is broadcast once per sequence.</p>
+
+<div class="pagebreak"></div>
+
+<h2>3. Component-by-component comparison (mask kernel = the BD3-LM port)</h2>
+<table>
+<tr><th style="width:16%">Component</th><th style="width:30%">Reference (bd3lms)</th><th style="width:30%">Local (bd_models.py)</th><th style="width:24%">Verdict</th></tr>
+<tr>
+  <td>Training attention mask</td>
+  <td><span class="mono">block_diff_mask</span>: M_BD | M_OBC | M_BC (flex-attention mask_mod)</td>
+  <td><span class="mono">get_block_diff_mask</span> (L61): OR of the same three sub-masks, materialized as a cached boolean tensor</td>
+  <td class="ok">Match — the three sub-mask predicates are literally identical</td>
+</tr>
+<tr>
+  <td>Vectorized training</td>
+  <td>[x<sub>t</sub> ‖ x<sub>0</sub>] concat, per-block t ~ U then repeat_interleave</td>
+  <td><span class="mono">_forward_mask</span> (L416): same concat, <span class="mono">_sample_t_blocks</span> → repeat_interleave</td>
+  <td class="ok">Match</td>
+</tr>
+<tr>
+  <td>Loss (NELBO)</td>
+  <td>loss_scale = −1/t (log-linear); SUBS carry-over restricts contribution to masked positions; normalized by valid-token count</td>
+  <td>−(1/t)·log p<sub>θ</sub>(x<sub>0</sub>) applied explicitly to masked positions only; normalized by the loss-mask sum</td>
+  <td class="ok">Match — carry-over (reference) vs. explicit masking (local) are two implementations of the same value</td>
+</tr>
+<tr>
+  <td>SUBS constraint</td>
+  <td>logits[MASK] = −inf; unmasked pinned to one-hot</td>
+  <td>logits[..., MASK] = −1e9; unmasked positions excluded from both loss and sampling updates</td>
+  <td class="ok">Match (behaviorally)</td>
+</tr>
+<tr>
+  <td>First-hitting sampler</td>
+  <td>t ← t·u^(1/num_masked) (u a batch-shared scalar); samples the whole block, keeps one uniformly-chosen masked position</td>
+  <td><span class="mono">_denoise_block_mask</span> (L689): same time update (u per sample); picks one masked position uniformly, then samples it from p_x0</td>
+  <td class="ok">Match — the committed token's distribution is identical; per-sample u only adds within-batch independence</td>
+</tr>
+<tr>
+  <td>Semi-AR generation</td>
+  <td><span class="mono">_semi_ar_sampler</span>: append block → denoise → (EOS/entropy stop)</td>
+  <td><span class="mono">plan</span> (L570): append block → denoise → scan for dst (hit) / END (miss)</td>
+  <td class="ok">Structure matches (stop rule replaced for the task, §4-A)</td>
+</tr>
+<tr>
+  <td>Time conditioning</td>
+  <td>Effectively unnecessary for masked diffusion (masks self-identify)</td>
+  <td>Off by default for the mask kernel (opt-in via <span class="mono">bd_time_cond</span>); forced on for the graph kernel</td>
+  <td class="ok">Match (follows the paper's own argument)</td>
+</tr>
+</table>
+
+<h2>4. Where the local implementation differs — complete list</h2>
+
+<h3>A. Domain adaptation (language modeling → OD route planning)</h3>
+<table>
+<tr><th style="width:22%">Item</th><th>Details</th></tr>
+<tr><td>Vocabulary / states</td><td>BPE subwords → road-graph vertex ids (V=1,390) plus <span class="mono">END</span>(=V), <span class="mono">PAD</span>(=V+1), <span class="mono">MASK</span>(=V+2). Vertex embeddings initialized from node2vec.</td></tr>
+<tr><td>Canvas / length spec</td><td><span class="mono">[dst, ori, v₁, …, v_L=dst, END…END | PAD…PAD]</span> — the remainder of the block containing the path's final token is filled with END and <b>is a training target</b>; all later blocks are PAD and <b>excluded from the loss</b> (<span class="mono">build_canvas</span>; boundary cases asserted by the smoke test). A project-specific design absent from the reference.</td></tr>
+<tr><td>OD conditioning</td><td>Two channels: (1) dst·ori pinned as <b>clean in-context tokens</b> at canvas positions 0–1; (2) <span class="mono">od_mlp([emb(ori);emb(dst)])</span> added to the adaLN conditioning vector. Condition dropout 0.1 + a learned null_cond → unconditional generation and CFG supported (default w=1, CFG off). The reference only generates unconditionally.</td></tr>
+<tr><td>Stop rule</td><td>Instead of the reference's EOS/entropy/likelihood stopping (<span class="mono">_check_stop_conds</span>), the committed block is scanned: <b>dst appears → hit (success stop); END/PAD/MASK appears → miss</b>. No length model — length is emergent.</td></tr>
+<tr><td>Post-processing (eval)</td><td>Missed paths get refine_nx (shortest-path patch) / refine_es (<span class="mono">eval_shortest.refine()</span>) variants scored alongside. The current experiment reports <b>raw (no post-processing)</b> only.</td></tr>
+</table>
+
+<h3>B. Structural differences (similar behavior, different implementation)</h3>
+<table>
+<tr><th style="width:22%">Item</th><th style="width:34%">Reference</th><th>Local</th></tr>
+<tr><td>Position encoding</td><td>Rotary (relative)</td><td>Learned absolute position embedding (<span class="mono">pos = arange(S) % n</span> — the x<sub>t</sub>/x<sub>0</sub> halves share positions)</td></tr>
+<tr><td>Conditioning granularity</td><td>One c per sequence (σ embedding), broadcast</td><td>c is <b>per token</b> (per-block t + OD embedding) — needed to inject per-block noise levels and the OD channel simultaneously</td></tr>
+<tr><td>Attention kernel</td><td>FlexAttention + torch.compile (torch 2.x)</td><td>Manual matmul + masked_fill (torch 1.12 compatible; mathematically identical)</td></tr>
+<tr><td>Output head</td><td>No weight tying; DDitFinalLayer (adaLN)</td><td>Same structure (final adaLN + zero-init head)</td></tr>
+</table>
+
+<h3>C. Features present in the reference but removed locally</h3>
+<table>
+<tr><th style="width:26%">Feature</th><th style="width:44%">Role in the reference</th><th>Impact assessment</th></tr>
+<tr><td class="warn">Clipped noise schedule (var_min search)</td><td>Adaptively searches the t-interval [ε_min, ε_max] minimizing validation-loss variance. A headline contribution; <b>matters most at small block sizes</b></td><td>Local uses fixed t ∈ [1e-3, 1]. <b>The one difference to keep in mind when reading the block-size sweep</b> — small blocks (1, 2) may underperform relative to the original recipe. Within-sweep comparisons remain fair (identical conditions across all sizes)</td></tr>
+<tr><td>EMA (0.9999)</td><td>Weight moving average used at eval/generation</td><td>Not implemented. The existing blk4 baseline (hit 0.952) was also trained without EMA — the sweep stays internally consistent</td></tr>
+<tr><td>Antithetic t sampling</td><td>Stratified t to reduce gradient variance</td><td>Deliberately removed (stated in the module docstring). Slightly noisier loss estimates</td></tr>
+<tr><td>KV cache / nucleus sampling</td><td>Generation speed / quality-diversity trade-off</td><td>Speed/temperature features — no effect on accuracy evaluation (full-softmax sampling = temp 1.0)</td></tr>
+<tr><td>Fixed-step mask sampler</td><td>Alternative to first-hitting (T-step discretization)</td><td>Only first-hitting kept (it is the equivalent, faster one)</td></tr>
+</table>
+
+<h3>D. Local-only addition — the graph (uniform-state) kernel</h3>
+<p>This kernel does not exist in bd3lms; it is a <b>composition, not a port</b>: BD3-LM's block machinery (attention masks, [x<sub>t</sub>‖x<sub>0</sub>] training, semi-AR generation) is kept, while the within-block noising and loss are replaced by this repository's uniform-state CTMC diffusion from <span class="mono">seq_models.py</span> (Destroyer/Restorer), per block-diffusion-loss.pdf and CLAUDE.md.</p>
+<ul>
+<li>Noising: Q<sub>t</sub> = exp((A′−D′)β<sub>t</sub>) — a CTMC built from the road-graph adjacency; the state space is V+1 with an added &lt;end&gt; state (virtual &lt;end&gt; node of degree <span class="mono">bd_eos_deg</span>).</li>
+<li>Loss: D3PM ELBO = KL[q(x<sub>t−1</sub>|x<sub>t</sub>,x<sub>0</sub>) ‖ p<sub>θ</sub>] + CE + connectivity regularizer (the same math as Restorer.forward, applied per block under the loss mask).</li>
+<li>Generation: full max_T (100)-step reverse per block with an MC posterior approximation, followed by an adjacency-constrained decode.</li>
+<li>Time conditioning forced on (uniform noise is not self-identifying from x<sub>t</sub> alone).</li>
+</ul>
+
+<h2>5. Summary</h2>
+<ul>
+<li><b>The mask kernel follows BD3-LM's mathematics (mask · loss · sampler) exactly</b> — all five components in §3 verified by side-by-side code comparison.</li>
+<li>The differences fall into three buckets: <span class="add">(A) task adaptation</span> (OD conditioning · length spec · stop rule — required by the project spec), <span class="diff">(B·C) removed training conveniences</span> (EMA · clipped schedules · antithetic — second-order effects on accuracy, none on within-sweep comparisons), and <span class="add">(D) the added graph kernel</span> (an original design outside bd3lms).</li>
+<li>One caveat for interpreting results: the <b>absence of clipped schedules</b> may make small block sizes look worse than the original recipe would. Trends across block sizes remain valid, but avoid absolute claims like "blk1 equals the paper's AR baseline."</li>
+</ul>
+
+</body>
+</html>

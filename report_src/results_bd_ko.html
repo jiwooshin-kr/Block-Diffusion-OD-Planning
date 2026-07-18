@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Block-Diffusion OD Planning — Block Size Sweep 결과 (한국어판)</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; font-size: 10.5px; line-height: 1.6; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.4px; }
+  th, td { border: 1px solid #bbb; padding: 3.5px 6px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  td.num, th.num { text-align: right; }
+  .status-box { background: #fff8e6; border: 1.5px solid #e6c260; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .best { font-weight: 700; }
+  .small { font-size: 8.9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .muted { color: #666; font-style: italic; }
+  .eq { text-align: center; margin: 9px 0; font-family: "Times New Roman", serif; font-size: 11.5px; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h1>Block-Diffusion OD Planning — Block Size Sweep (mask 커널, raw)</h1>
+
+<div class="status-box">
+<b>상태 (2026-07-16).</b> mask 커널의 block size {1, 2, 4, 8, 16, 32, 64} 7종 모두 최종: 새 서버(143.248.84.179, RTX 3090 ×4, GPU당 1런, 2웨이브; 런당 학습 43–54분)에서 학습·평가 완료, tmux 세션 정상 종료. 요청에 따라 <b>이 보고서의 모든 수치는 raw — <span class="mono">eval_shortest.refine()</span>(refine_es)도, 최단경로 패치(refine_nx)도 일절 없음</b>; 따라서 hit = arrival. 이전 보고서(blk4 단독, refine 변형 포함): <span class="mono">RESULTS_BD_prev.pdf</span>. <b>2026-07-17 갱신</b>: §4(실패 해부), §5(후처리 P1/P3), §6(importance-weight guidance — 33런 + adjacency-masked proposal 14런, §6.5; Lemma 3 포함 수식은 BD_GUIDANCE_FORMULATION.pdf) 추가. bd3lms 원본 대비 코드 검증: <span class="mono">BD_CODE_VERIFICATION_{KO,EN}.pdf</span>.
+</div>
+
+<p><b>설정</b> — swept block size를 제외하면 <span class="mono">RESULTS_BD_prev.pdf</span>와 동일. BD3-LM 방식 block diffusion (블록 간 semi-AR, 블록 내 absorbing/[MASK] diffusion, SUBS 가중 CE, first-hitting 샘플링). Transformer 디노이저: 6층, dim 256, adaLN conditioning (~6.8M 파라미터). 학습 1 epoch = 48.2k iter (bs 32, lr 5e-4), 데이터 <span class="mono">porto_v3_normal</span> (index v3-0.05, 정점 1,390, 경로 193만). 캔버스는 프로젝트 길이 스펙 <span class="mono">[dst, ori, v1, …, v_L=dst, END…END | PAD…PAD]</span>: dst 블록 내부의 END tail은 학습 대상, 이후 PAD 블록은 loss 제외. 조건화: dst + ori를 클린 in-context prefix 토큰으로 + OD 임베딩을 adaLN으로; 조건 dropout 0.1; CFG off (w = 1). 생성은 open-ended (<span class="mono">length_mode=open</span>): dst(hit) 또는 END(miss)가 나올 때까지 블록 추가 — 길이 모델 없음.</p>
+
+<p><b>평가.</b> 런당 held-out OD쌍 1,000개, open-ended, <b>raw만</b>. <span class="mono">hit</span> = 후처리 없이 dst 도달 (이 보고서에선 = arrival); <span class="mono">valid∧hit</span> = 사용 가능 경로 비율; EM / PC / DTW / 길이 지표는 동반 보고서와 동일. <span class="muted">주의: 런마다 평가 1,000쌍을 독립적으로 추출하므로(로드 시 무시드 셔플) 런 간 ~±1%p는 표집 노이즈 이내.</span></p>
+
+<h2>1. Block size sweep — mask 커널, raw (refine 없음)</h2>
+<table>
+<tr>
+  <th>block size</th><th class="num">hit (=arrival)</th><th class="num">valid</th><th class="num">valid∧hit (raw)</th>
+  <th class="num">EM</th><th class="num">PC</th><th class="num">DTW</th>
+  <th class="num">len err</th><th class="num">len corr</th><th class="num">gen len</th><th class="num">real len</th><th class="num">s/path</th>
+</tr>
+<tr><td><b>1</b></td><td class="num best">0.997</td><td class="num best">0.943</td><td class="num best">0.943</td><td class="num best">0.845</td><td class="num best">0.883</td><td class="num best">0.030</td><td class="num">0.69</td><td class="num">+0.878</td><td class="num">23.5</td><td class="num">23.0</td><td class="num">0.012</td></tr>
+<tr><td>2</td><td class="num">0.924</td><td class="num">0.809</td><td class="num">0.777</td><td class="num">0.755</td><td class="num">0.778</td><td class="num">0.044</td><td class="num">0.49</td><td class="num">+0.977</td><td class="num">23.3</td><td class="num">23.2</td><td class="num best">0.004</td></tr>
+<tr><td>4</td><td class="num">0.943</td><td class="num">0.853</td><td class="num">0.821</td><td class="num">0.789</td><td class="num">0.816</td><td class="num">0.035</td><td class="num best">0.32</td><td class="num best">+0.995</td><td class="num">23.7</td><td class="num">23.6</td><td class="num best">0.004</td></tr>
+<tr><td>8</td><td class="num">0.953</td><td class="num">0.807</td><td class="num">0.777</td><td class="num">0.729</td><td class="num">0.761</td><td class="num">0.041</td><td class="num">0.35</td><td class="num best">+0.995</td><td class="num">22.9</td><td class="num">22.9</td><td class="num best">0.004</td></tr>
+<tr><td>16</td><td class="num">0.912</td><td class="num">0.633</td><td class="num">0.598</td><td class="num">0.554</td><td class="num">0.584</td><td class="num">0.062</td><td class="num">0.64</td><td class="num">+0.979</td><td class="num">23.0</td><td class="num">23.0</td><td class="num">0.004</td></tr>
+<tr><td>32</td><td class="num">0.900</td><td class="num">0.526</td><td class="num">0.488</td><td class="num">0.443</td><td class="num">0.476</td><td class="num">0.063</td><td class="num">0.69</td><td class="num">+0.992</td><td class="num">23.4</td><td class="num">23.4</td><td class="num">0.005</td></tr>
+<tr><td>64</td><td class="num">0.877</td><td class="num">0.504</td><td class="num">0.454</td><td class="num">0.400</td><td class="num">0.439</td><td class="num">0.069</td><td class="num">0.88</td><td class="num">+0.986</td><td class="num">24.1</td><td class="num">24.0</td><td class="num">0.007</td></tr>
+</table>
+<p class="small">굵게 = 열 최고. s/path: first-hitting은 어느 block size든 생성 토큰당 ~1 forward라 시간이 거의 평평함; blk1의 3배 오버헤드는 블록당 외부 루프(append → denoise → scan을 토큰마다) 때문.</p>
+
+<h2>2. 실제 경로 길이 구간별 arrival (raw) — horizon 테스트</h2>
+<table>
+<tr><th>block size</th><th class="num">len 2–15</th><th class="num">len 16–25</th><th class="num">len 26–35</th><th class="num">len 36+</th></tr>
+<tr><td><b>1</b></td><td class="num best">0.992</td><td class="num best">1.000</td><td class="num best">0.996</td><td class="num best">1.000</td></tr>
+<tr><td>2</td><td class="num">0.844</td><td class="num">0.941</td><td class="num">0.958</td><td class="num">0.958</td></tr>
+<tr><td>4</td><td class="num">0.864</td><td class="num">0.953</td><td class="num">0.978</td><td class="num">0.970</td></tr>
+<tr><td>8</td><td class="num">0.926</td><td class="num">0.956</td><td class="num">0.961</td><td class="num">0.982</td></tr>
+<tr><td>16</td><td class="num">0.865</td><td class="num">0.919</td><td class="num">0.931</td><td class="num">0.943</td></tr>
+<tr><td>32</td><td class="num">0.876</td><td class="num">0.871</td><td class="num">0.934</td><td class="num">0.957</td></tr>
+<tr><td>64</td><td class="num">0.873</td><td class="num">0.892</td><td class="num">0.884</td><td class="num">0.833</td></tr>
+</table>
+
+<h2>3. 발견</h2>
+<ul>
+<li><b>블록이 작을수록 좋고, blk1(AR 극한)이 전면 우승.</b> 블록이 1 → 64로 커질수록 arrival 0.997 → 0.877, validity 0.943 → 0.504. blk1은 refine 없이 이 벤치마크를 사실상 해결 — 99.7%가 스스로 dst 도달, 94.3%가 동시에 edge-valid.</li>
+<li><b>큰 블록이 지불하는 것은 validity.</b> hit은 완만히(−12%p) 떨어지지만 validity는 급락(−44%p). 블록 내부에서 first-hitting이 <i>무작위</i> 순서로 토큰을 공개하므로, 큰 블록에서는 이미 확정된 비인접 앵커 사이를 잇는 양방향 제약 채우기가 자주 발생 — edge-validity가 정확히 그 국소 일관성이다. blk1은 좌→우 생성이라 매 스텝이 직전 정점을 조건으로 가짐.</li>
+<li><b>blk2–8 고원, 이후 절벽.</b> blk2–8은 통계적으로 근접(valid∧hit 0.78–0.82, 그중 blk4 최고); blk16부터 모든 일관성 지표가 급락(0.60 → 0.45). 블록 병렬성이 필요하면 blk4가 sweet spot — 이전 보고서의 선택과 일치.</li>
+<li><b>blk4가 이전 보고서를 재현.</b> hit 0.943 / valid∧hit 0.821 vs 이전 0.952 / 0.820 — 다른 서버·평가 추출·데이터 순서에서 ±1%p 표집 노이즈 이내. 파이프라인 전 구간 안정.</li>
+<li><b>blk64를 빼면 horizon 붕괴 없음.</b> 점진적 블록 커밋 덕에 blk1–32에서는 경로가 길어져도 arrival이 유지(또는 상승); blk64만 len 36+에서 감쇠(0.833). full-canvas 트랙의 horizon 복리 실패는 어디서도 재발하지 않음.</li>
+<li><b>창발 길이는 모든 block size에서 보정 유지</b>: gen len이 real len을 평균 0.1–0.5토큰 이내로 추적, blk ≥ 2에서 len corr ≥ +0.977. blk1의 낮은 corr(+0.878)은 hit율 99.7%로 인한 통계적 아티팩트이지 보정 실패가 아님.</li>
+<li><b>AR↔diffusion 트레이드의 해석.</b> BD3-LM 논문의 핵심 트레이드오프가 계획 도메인에서 재현: block size는 블록 내 병렬성을 사고 우도·일관성을 지불한다. 이 그래프 제약 과제에서 그 비용은 거의 전부 edge validity에 얹힌다. 코드 검증에서의 주의점: 본 구현은 bd3lms의 clipped noise schedule(작은 블록에서 효과가 큰 분산 감소)을 생략 — 즉 작은 블록 수치는 원본 레시피 대비 <i>과소평가</i>일 수 있으며, 이는 small-block 결론을 오히려 강화한다. sweep 내부 비교는 전 구간 동일 조건이라 영향 없음.</li>
+</ul>
+
+<h2>4. 실패 해부 — 길이 보정의 출처, miss의 정체, validity가 떨어지는 이유</h2>
+<p class="small">이 절의 측정은 저장된 체크포인트에 새로 400쌍을 추출해 돌린 사후 진단 (refine 없음); n_miss = 21–49라 하위집단 비율에는 ~±10%p 표집 노이즈.</p>
+
+<h3>4.1 높은 len corr는 대부분 dst-절단 기하학이지 END 예측이 아니다</h3>
+<p>생성 길이는 hit 경로에선 <b>dst 토큰이 방출되는 위치</b>(경로가 dst에서 절단됨)로, miss 경로(~5–12%)에서만 <b>END 방출 위치</b>로 결정된다. 하위집단별 분해:</p>
+<table>
+<tr><th>block size</th><th class="num">hit</th><th class="num">len corr (전체)</th><th class="num">len corr (hit만)</th><th class="num">len corr (miss만)</th><th class="num">hit 우회율 gen/real</th></tr>
+<tr><td>64</td><td class="num">0.877</td><td class="num">0.985</td><td class="num">0.991</td><td class="num">0.952</td><td class="num">1.011</td></tr>
+<tr><td>16</td><td class="num">0.927</td><td class="num">0.988</td><td class="num">0.988</td><td class="num">0.970</td><td class="num">1.011</td></tr>
+<tr><td>4</td><td class="num">0.963</td><td class="num">0.980</td><td class="num">0.990</td><td class="num">0.778</td><td class="num">1.012</td></tr>
+</table>
+<p>hit 경로는 실제(최단) 경로 대비 ~1.1%만 우회하며 dst에 도달하므로 길이는 OD쌍의 그래프 거리에 고정 — corr 0.99는 기하학의 귀결. 이것이 blk64에서 validity가 무너져도 len corr가 0.99로 유지되는 이유: 큰 블록이 깨는 것은 국소 edge 일관성이지 "dst까지 몇 토큰"의 전역 구조가 아니다. END 보정은 실재하지만 부차적: miss만 관장하며 거기서도 양호(대형 블록에서 miss-only corr 0.95–0.97, 평균 길이 일치) — END가 없었다면 miss가 캔버스 한계까지 폭주해 전체 corr를 끌어내렸을 것.</p>
+
+<h3>4.2 miss는 near-miss다: 모델은 목적지 문 앞까지 간다</h3>
+<p><b>miss</b> = dst 정점을 한 번도 밟지 않은 채 END(종료 선언)를 방출한 경우; 본 raw 보고서에선 후처리가 없어 arrival 실패로 집계된다. miss 경로의 마지막 정점에서 dst까지의 그래프 hop 거리:</p>
+<table>
+<tr><th>block size</th><th class="num">n_miss</th><th class="num">중앙값 hops</th><th class="num">평균</th><th class="num">≤1 hop</th><th class="num">≤2 hops</th><th class="num">≤5 hops</th></tr>
+<tr><td>64</td><td class="num">40</td><td class="num">1</td><td class="num">1.8</td><td class="num">52%</td><td class="num">92%</td><td class="num">98%</td></tr>
+<tr><td>16</td><td class="num">39</td><td class="num">2</td><td class="num">3.3</td><td class="num">33%</td><td class="num">87%</td><td class="num">95%</td></tr>
+<tr><td>4</td><td class="num">21</td><td class="num">1</td><td class="num">2.8</td><td class="num">52%</td><td class="num">81%</td><td class="num">90%</td></tr>
+</table>
+<p>hit율과 합치면 <b>blk64에서도 전체 경로의 ~99%가 dst 2 hop 이내에서 종료</b>. miss는 내비게이션 실패가 아니라 마지막 순간의 토큰 식별 실패("정확한 dst id 대신 END 방출") — dst 직후 END를 학습시키는 길이 스펙의 예측 가능한 부작용이기도 하다. 이전 보고서에서 refine_es(dst 인접 정점에서 절단 + dst 부착)가 arrival을 +3%p 회복할 수 있었던 이유와 정확히 맞물린다.</p>
+
+<h3>4.3 대형 블록에서 validity가 떨어지는 이유: 희소한 국소 스킵의 경로 단위 증폭</h3>
+<table>
+<tr><th></th><th class="num">blk64</th><th class="num">blk16</th></tr>
+<tr><td>invalid edge (edge 단위)</td><td class="num"><b>3.6%</b> (332 / 9,130)</td><td class="num">2.2% (199 / 9,150)</td></tr>
+<tr><td>invalid edge ≥1개 포함 경로</td><td class="num">52%</td><td class="num">33%</td></tr>
+<tr><td>해당 경로당 invalid edge 수</td><td class="num">1.6</td><td class="num">1.5</td></tr>
+<tr><td>invalid 쌍의 실제 hop 거리</td><td class="num">중앙값 3; 91% ≤ 3</td><td class="num">중앙값 3; 87% ≤ 3</td></tr>
+<tr><td>발생 위치</td><td class="num"><b>블록 내부 332, 블록 경계 0</b></td><td class="num">내부 188, 경계 11</td></tr>
+</table>
+<ul>
+<li><b>붕괴가 아니라 증폭.</b> blk64의 edge 단위 정확도는 여전히 96.4%; 경로당 ~23 edge이므로 P(전부 유효) ≈ 0.964²³ ≈ 0.43 — 관측치 0.50과 일치. all-or-nothing 경로 지표가 3.6%의 edge 오류를 50%의 경로 실패로 보이게 한다.</li>
+<li><b>오류는 전부 블록 내부.</b> 블록 경계 edge(이전 블록 완전 커밋 후 생성 = 사실상 AR)는 invalid 0건. 원인은 first-hitting의 블록 내 <i>무작위</i> 공개 순서: 비인접 앵커 사이의 양방향 제약 조건부는 좌→우 조건부보다 조합적으로 어렵고 덜 정확하게 학습되며, 블록이 클수록 그런 패턴이 많아진다.</li>
+<li><b>스킵은 국소적.</b> invalid 쌍의 실거리는 2–3 hop(중앙값 3): 다리 정점 하나를 빠뜨리는 것이지 순간이동이 아니다.</li>
+</ul>
+
+<h3>4.4 시사점 — 개선 방향</h3>
+<ul>
+<li><b>대형 블록에서도 모델은 망가지지 않았다</b>: 전역 구조(종점 배치·길이·근최단 경로)는 온전; 결함은 희소(3.6%)·국소(2–3 hop)·정확히 위치 지정 가능(인접성 검사). 이 실패 프로파일은 <b>재학습보다 후처리</b>에 유리하다.</li>
+<li><b>Local splice (P1, §5에서 구현)</b>: invalid (u, v)마다 최단경로 삽입(중앙값 정점 2개). 구조상 validity → 1.0, 종점 불변으로 hit 유지.</li>
+<li><b>학습 쪽 수정은 2차적</b>: 용량/epoch/clipped schedule로 edge 오류율은 낮출 수 있으나 any-order infilling은 본질적으로 AR보다 어렵다(원 논문의 블록-우도 경향).</li>
+<li><b>샘플러 쪽 수정은 분포를 바꾼다</b>: 블록 내 좌→우 공개나 인접행렬 제약 디코드는 균등 선택 first-hitting과 학습된 역과정의 등가성을 깨는 별도 디코더 — 학습된 모델의 조건부는 순서-일관적이지 않고, 좌→우가 의존하는 prefix 조건부 패턴은 대형 블록의 무작위 마스킹 학습에서 드물다. 경험적 검증 필요.</li>
+</ul>
+
+<h2>5. 후처리 결과 — P1 (local splice), P3 (endpoint patch), P1+P3</h2>
+<p>§4.4의 구현(<span class="mono">eval_bd_postproc.py</span>): 체크포인트마다 1,000쌍을 한 번 생성(raw)한 뒤 <b>같은 생성물</b>에 세 후처리를 적용해 채점. <b>P1</b>: invalid (u, v)마다 최단경로 u→v 삽입; <b>P3</b>(= refine_nx): miss 종점에서 dst까지 graft; <b>P1+P3</b>: 둘의 결합. 새로 추출한 평가셋(seed 1)이라 raw 값은 §1과 ±1%p 이내에서 다름.</p>
+<table>
+<tr><th>blk</th><th>변형</th><th class="num">arrival</th><th class="num">valid</th><th class="num">valid∧hit (raw)</th><th class="num">EM</th><th class="num">PC</th><th class="num">DTW</th><th class="num">len err</th><th class="num">patch len</th></tr>
+<tr><td rowspan="4">1</td><td>raw</td><td class="num">0.998</td><td class="num">0.935</td><td class="num">0.935</td><td class="num">0.836</td><td class="num">0.874</td><td class="num">0.036</td><td class="num">0.64</td><td class="num">—</td></tr>
+<tr><td>P1</td><td class="num">0.998</td><td class="num">1.000</td><td class="num">0.998</td><td class="num">0.854</td><td class="num">0.902</td><td class="num">0.035</td><td class="num">0.94</td><td class="num">0.42</td></tr>
+<tr><td>P3</td><td class="num">1.000</td><td class="num">0.935</td><td class="num">0.935</td><td class="num">0.836</td><td class="num">0.874</td><td class="num">0.035</td><td class="num">0.68</td><td class="num">0.04</td></tr>
+<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.998</td><td class="num">0.854</td><td class="num">0.902</td><td class="num">0.034</td><td class="num">0.99</td><td class="num">0.46</td></tr>
+<tr><td rowspan="4">2</td><td>raw</td><td class="num">0.937</td><td class="num">0.797</td><td class="num">0.761</td><td class="num">0.735</td><td class="num">0.761</td><td class="num">0.053</td><td class="num">0.62</td><td class="num">—</td></tr>
+<tr><td>P1</td><td class="num">0.937</td><td class="num">0.999</td><td class="num">0.937</td><td class="num">0.783</td><td class="num">0.846</td><td class="num">0.052</td><td class="num">1.80</td><td class="num">1.71</td></tr>
+<tr><td>P3</td><td class="num">1.000</td><td class="num">0.797</td><td class="num">0.761</td><td class="num">0.724</td><td class="num">0.753</td><td class="num">0.051</td><td class="num">0.68</td><td class="num">0.21</td></tr>
+<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.937</td><td class="num">0.773</td><td class="num">0.837</td><td class="num">0.050</td><td class="num">1.95</td><td class="num">1.92</td></tr>
+<tr><td rowspan="4">4</td><td>raw</td><td class="num">0.958</td><td class="num">0.822</td><td class="num">0.794</td><td class="num">0.737</td><td class="num">0.773</td><td class="num">0.040</td><td class="num">0.46</td><td class="num">—</td></tr>
+<tr><td>P1</td><td class="num">0.958</td><td class="num">1.000</td><td class="num">0.958</td><td class="num">0.772</td><td class="num">0.847</td><td class="num">0.044</td><td class="num">1.19</td><td class="num">0.96</td></tr>
+<tr><td>P3</td><td class="num">1.000</td><td class="num">0.822</td><td class="num">0.794</td><td class="num">0.729</td><td class="num">0.768</td><td class="num">0.042</td><td class="num">0.59</td><td class="num">0.19</td></tr>
+<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.958</td><td class="num">0.764</td><td class="num">0.841</td><td class="num">0.043</td><td class="num">1.33</td><td class="num">1.14</td></tr>
+<tr><td rowspan="4">8</td><td>raw</td><td class="num">0.960</td><td class="num">0.790</td><td class="num">0.768</td><td class="num">0.704</td><td class="num">0.739</td><td class="num">0.040</td><td class="num">0.42</td><td class="num">—</td></tr>
+<tr><td>P1</td><td class="num">0.960</td><td class="num">1.000</td><td class="num">0.960</td><td class="num">0.764</td><td class="num">0.845</td><td class="num">0.045</td><td class="num">1.13</td><td class="num">1.05</td></tr>
+<tr><td>P3</td><td class="num">1.000</td><td class="num">0.790</td><td class="num">0.768</td><td class="num">0.698</td><td class="num">0.735</td><td class="num">0.039</td><td class="num">0.49</td><td class="num">0.15</td></tr>
+<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.960</td><td class="num">0.757</td><td class="num">0.838</td><td class="num">0.044</td><td class="num">1.23</td><td class="num">1.20</td></tr>
+<tr><td rowspan="4">16</td><td>raw</td><td class="num">0.885</td><td class="num">0.626</td><td class="num">0.569</td><td class="num">0.541</td><td class="num">0.575</td><td class="num">0.072</td><td class="num">0.63</td><td class="num">—</td></tr>
+<tr><td>P1</td><td class="num">0.885</td><td class="num">1.000</td><td class="num">0.885</td><td class="num">0.612</td><td class="num">0.727</td><td class="num">0.076</td><td class="num">2.35</td><td class="num">2.24</td></tr>
+<tr><td>P3</td><td class="num">1.000</td><td class="num">0.626</td><td class="num">0.569</td><td class="num">0.523</td><td class="num">0.562</td><td class="num">0.068</td><td class="num">0.79</td><td class="num">0.36</td></tr>
+<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.885</td><td class="num">0.588</td><td class="num">0.708</td><td class="num">0.072</td><td class="num">2.58</td><td class="num">2.59</td></tr>
+<tr><td rowspan="4">32</td><td>raw</td><td class="num">0.885</td><td class="num">0.522</td><td class="num">0.474</td><td class="num">0.450</td><td class="num">0.478</td><td class="num">0.061</td><td class="num">0.77</td><td class="num">—</td></tr>
+<tr><td>P1</td><td class="num">0.885</td><td class="num">1.000</td><td class="num">0.885</td><td class="num">0.582</td><td class="num">0.705</td><td class="num">0.062</td><td class="num">1.96</td><td class="num">1.80</td></tr>
+<tr><td>P3</td><td class="num">1.000</td><td class="num">0.522</td><td class="num">0.474</td><td class="num">0.432</td><td class="num">0.466</td><td class="num">0.059</td><td class="num">0.85</td><td class="num">0.26</td></tr>
+<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.885</td><td class="num">0.558</td><td class="num">0.686</td><td class="num">0.060</td><td class="num">2.14</td><td class="num">2.06</td></tr>
+<tr><td rowspan="4">64</td><td>raw</td><td class="num">0.886</td><td class="num">0.517</td><td class="num">0.465</td><td class="num">0.423</td><td class="num">0.458</td><td class="num">0.055</td><td class="num">0.81</td><td class="num">—</td></tr>
+<tr><td>P1</td><td class="num">0.886</td><td class="num">1.000</td><td class="num">0.886</td><td class="num">0.588</td><td class="num">0.711</td><td class="num">0.058</td><td class="num">1.85</td><td class="num">1.75</td></tr>
+<tr><td>P3</td><td class="num">1.000</td><td class="num">0.517</td><td class="num">0.465</td><td class="num">0.411</td><td class="num">0.450</td><td class="num">0.054</td><td class="num">0.90</td><td class="num">0.27</td></tr>
+<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.886</td><td class="num">0.569</td><td class="num">0.695</td><td class="num">0.056</td><td class="num">2.01</td><td class="num">2.01</td></tr>
+</table>
+<p class="small">block size마다 같은 생성물의 네 변형 (파일: <span class="mono">sets_res/BD_mask_blk*_postproc.res</span>). <b>열 정의</b>: hit은 항상 후처리 전 출력에서 측정되므로 valid∧hit (raw)는 후처리로 부풀 수 없다 — P1+P3(valid = arrival = 1.0 구조 보장)에서는 남는 유일한 모델 의존량인 raw hit rate와 같다. blk2의 P1 valid 0.999는 연결 경로가 없는 invalid 쌍 1건을 그대로 둔 것.</p>
+<ul>
+<li><b>§4.4의 예측이 거의 정확히 실현</b>: blk64에서 valid∧hit 0.465 → 0.886 (= hit), 평균 패치 비용 1.75토큰; 수선 불가 쌍은 전 런에서 0건.</li>
+<li><b>P1은 대형 블록에서 EM/PC도 개선</b> (blk64 EM 0.423 → 0.588, PC 0.458 → 0.711): 삽입된 다리가 실제 경로 조각이라 참조 경로와 겹침 — 패치가 경로를 합법화할 뿐 아니라 실제 경로 쪽으로 이동시킨다.</li>
+<li><b>P1+P3는 모든 block size에서 valid = 1 ∧ arrival = 1의 구조적 보장</b>을 제공하며 DTW는 거의 불변, len err는 +0.3–2.0토큰. 이 후처리 하에서 사용 가능 경로 비율 = raw hit rate — 후처리가 대형 블록의 validity 비용을 전부 흡수하고, 남는 block size 페널티는 hit뿐.</li>
+</ul>
+
+<h2>6. 예외 상황(except_0)에서의 importance-weight guidance</h2>
+<p>설계·유도 전문: <span class="mono">pdfs/BD_GUIDANCE_FORMULATION.pdf</span>. 부분 경로 discriminator(edge-existence 채널 + 시나리오 인접행렬 GraphSAGE, bounded logit, label smoothing)가 <b>매</b> first-hitting reveal에서 mean-field 후보 N = 100개를 w = D/(1−D)로 재가중. 백본은 §1의 normal 학습 체크포인트(v4-normal ≡ v3-normal); 평가 = 예약된 except_0 OD쌍 1,000개, <b>예외 인접행렬 기준</b> 채점, raw. <span class="mono">rem-path</span> = 제거된 edge를 1개 이상 쓴 경로 비율; ESS = importance weight의 유효 표본 수(reveal당 평균; N = 100).</p>
+
+<h3>6.1 주축 — block size × guidance (fam 0.05, 데이터 1%, 실험 1)</h3>
+<table>
+<tr><th>blk</th><th>변형</th><th class="num">arrival</th><th class="num">valid (exc)</th><th class="num">valid∧hit (raw)</th><th class="num">rem-path</th><th class="num">EM</th><th class="num">PC</th><th class="num">ESS/100</th></tr>
+<tr><td rowspan="3">4</td><td>base</td><td class="num">0.939</td><td class="num">0.253</td><td class="num">0.239</td><td class="num">0.661</td><td class="num">0.231</td><td class="num">0.240</td><td class="num">—</td></tr>
+<tr><td>guided (data)</td><td class="num">0.948</td><td class="num">0.306</td><td class="num">0.284</td><td class="num">0.651</td><td class="num">0.269</td><td class="num">0.285</td><td class="num">99.1</td></tr>
+<tr><td>guided (mix)</td><td class="num">0.948</td><td class="num best">0.315</td><td class="num best">0.290</td><td class="num">0.651</td><td class="num">0.281</td><td class="num">0.296</td><td class="num">99.1</td></tr>
+<tr><td rowspan="3">8</td><td>base</td><td class="num">0.944</td><td class="num">0.242</td><td class="num">0.229</td><td class="num">0.656</td><td class="num">0.211</td><td class="num">0.223</td><td class="num">—</td></tr>
+<tr><td>guided (data)</td><td class="num">0.937</td><td class="num">0.286</td><td class="num">0.268</td><td class="num">0.648</td><td class="num">0.266</td><td class="num">0.275</td><td class="num">98.8</td></tr>
+<tr><td>guided (mix)</td><td class="num">0.936</td><td class="num">0.293</td><td class="num">0.271</td><td class="num">0.646</td><td class="num">0.272</td><td class="num">0.281</td><td class="num">98.8</td></tr>
+<tr><td rowspan="3">16</td><td>base</td><td class="num">0.896</td><td class="num">0.206</td><td class="num">0.181</td><td class="num">0.642</td><td class="num">0.177</td><td class="num">0.188</td><td class="num">—</td></tr>
+<tr><td>guided (data)</td><td class="num">0.885</td><td class="num">0.245</td><td class="num">0.208</td><td class="num">0.625</td><td class="num">0.213</td><td class="num">0.225</td><td class="num">97.9</td></tr>
+<tr><td>guided (mix)</td><td class="num">0.884</td><td class="num">0.250</td><td class="num">0.215</td><td class="num">0.630</td><td class="num">0.214</td><td class="num">0.228</td><td class="num">98.0</td></tr>
+<tr><td rowspan="3">32</td><td>base</td><td class="num">0.897</td><td class="num">0.165</td><td class="num">0.153</td><td class="num">0.657</td><td class="num">0.136</td><td class="num">0.147</td><td class="num">—</td></tr>
+<tr><td>guided (data)</td><td class="num">0.885</td><td class="num">0.199</td><td class="num">0.172</td><td class="num">0.649</td><td class="num">0.156</td><td class="num">0.173</td><td class="num">97.4</td></tr>
+<tr><td>guided (mix)</td><td class="num">0.878</td><td class="num">0.205</td><td class="num">0.169</td><td class="num">0.649</td><td class="num">0.165</td><td class="num">0.181</td><td class="num">97.8</td></tr>
+<tr><td rowspan="3">64</td><td>base</td><td class="num">0.864</td><td class="num">0.164</td><td class="num">0.151</td><td class="num">0.634</td><td class="num">0.131</td><td class="num">0.145</td><td class="num">—</td></tr>
+<tr><td>guided (data)</td><td class="num">0.876</td><td class="num">0.205</td><td class="num">0.181</td><td class="num">0.630</td><td class="num">0.157</td><td class="num">0.176</td><td class="num">94.1</td></tr>
+<tr><td>guided (mix)</td><td class="num">0.882</td><td class="num">0.204</td><td class="num">0.183</td><td class="num">0.635</td><td class="num">0.157</td><td class="num">0.175</td><td class="num">95.5</td></tr>
+</table>
+
+<h3>6.2 Pivot (blk 4 / 16)</h3>
+<table>
+<tr><th>축</th><th>구성</th><th class="num">blk4 valid (base→guided)</th><th class="num">blk16 valid (base→guided)</th><th>해석</th></tr>
+<tr><td>더 어려운 시나리오</td><td>fam 0.1, 1%, 실험 1 (mix)</td><td class="num">0.096 → 0.120</td><td class="num">0.057 → 0.088</td><td>2배 어려운 그래프(rem-path 0.86)에서도 같은 상대 개선</td></tr>
+<tr><td>데이터 양</td><td>fam 0.05, 3%, 실험 1 (mix)</td><td class="num">0.253 → 0.311</td><td class="num">0.206 → 0.253</td><td>1%와 사실상 동일 — 데이터 양은 병목이 아님</td></tr>
+<tr><td><b>unseen 시나리오 (실험 2)</b></td><td>disc는 except 1–99로 학습, 평가는 except_0 (data)</td><td class="num">0.253 → <b>0.314</b></td><td class="num">0.206 → <b>0.256</b></td><td><b>except_0 전용 disc와 동등 이상</b> (0.306 / 0.245): 인접행렬 직접 참조 discriminator(edge-existence 조회 + GraphSAGE)가 한 번도 본 적 없는 시나리오로 전이 — 실험 2.1의 일반화 가설 지지</td></tr>
+</table>
+
+<h3>6.3 Proposal 온도 (동반 문서 §6 처방 (i); fam 0.05, 1%, data disc)</h3>
+<table>
+<tr><th>blk</th><th class="num">τ</th><th class="num">arrival</th><th class="num">valid</th><th class="num">rem-path</th><th class="num">ESS/100</th></tr>
+<tr><td rowspan="3">4</td><td class="num">1.0</td><td class="num">0.948</td><td class="num">0.306</td><td class="num">0.651</td><td class="num">99.1</td></tr>
+<tr><td class="num">1.5</td><td class="num">0.910</td><td class="num">0.285</td><td class="num">0.639</td><td class="num">98.3</td></tr>
+<tr><td class="num">2.0</td><td class="num">0.853</td><td class="num">0.236</td><td class="num">0.615</td><td class="num">97.1</td></tr>
+<tr><td rowspan="3">16</td><td class="num">1.0</td><td class="num">0.885</td><td class="num">0.245</td><td class="num">0.625</td><td class="num">97.9</td></tr>
+<tr><td class="num">1.5</td><td class="num">0.834</td><td class="num">0.218</td><td class="num">0.602</td><td class="num">97.1</td></tr>
+<tr><td class="num">2.0</td><td class="num">0.729</td><td class="num">0.147</td><td class="num">0.586</td><td class="num">97.0</td></tr>
+</table>
+
+<h3>6.4 발견</h3>
+<ul>
+<li><b>Absorbing 커널 instantiation은 기계적으로 작동한다.</b> 이전에 관측된 weight 분산 폭발이 재발하지 않음(bounded logit + label smoothing + negative 커버리지); 부분 경로에 대한 disc 검증 정확도 0.71–0.88; 모든 block size에서 <b>일관되게</b> validity +4–5%p, EM/PC +3–5%p, arrival 불변.</li>
+<li><b>그러나 효과는 작고, 원인이 이제 추측이 아니라 측정이다: ESS ≈ 94–99 / 100.</b> mean-field 후보 100개가 near-clone이라 가중치가 거의 평평 — <span class="mono">MASKED_GUIDANCE.pdf</span> §6이 예측한 proposal entropy 병목이 BD의 모든 block size에서 실측됨. 제거 edge 사용률이 거의 불변(0.66 → 0.65)인 것이 그 증거: 재가중은 제시된 후보 중에서만 고를 수 있는데, 제거 edge를 피하는 후보가 거의 제시되지 않는다.</li>
+<li><b>unseen 시나리오 일반화(실험 2)가 가장 명확한 긍정 결과</b>: except_0을 본 적 없는 disc가 전용 disc와 동등(약간 우위)하게 guidance한다. 시나리오 정보는 암기된 경로가 아니라 인접행렬 조회 피처를 통해 들어간다.</li>
+<li><b>Proposal 온도를 올리는 것은 얻는 것보다 잃는 것이 크다</b>: rem-path −2~−6%p에 arrival −4~−17%p; ESS는 여전히 ≈ 97. 같은 proposal을 평평하게 만드는 것으로는 부족하다.</li>
+<li><b>시사점.</b> 재가중 기계는 검증됐고, 병목은 proposal이다. 자연스러운 다음 단계는 discriminator를 유지한 채 후보 생성기를 바꾸는 것: (i) A<sub>scn</sub> 하의 adjacency-masked proposal (동반 문서 처방 (ii)) — 제거 edge를 아예 쓸 수 없는 후보들 위에서 IW guidance가 합법적 우회로를 선택; 그리고/또는 (ii) 시나리오 그래프 기준의 P1형 splice와 discriminator의 채점 측 활용.</li>
+</ul>
+
+
+<h3>6.5 Adjacency-masked proposal (Lemma 3) — 병목 해소의 실측</h3>
+<p>§6.1과 같은 프로토콜에, 후보 proposal을 공개된 이웃 기준 시나리오-합법 전이로 마스킹 (<span class="mono">BD_GUIDANCE_FORMULATION.pdf</span> §6: 이상적 discriminator 하에서 정확 — 제외되는 후보는 target 가중치가 0). <span class="mono">adj-only</span> = discriminator 없이 마스킹만 (제약 자체의 효과 분리용 컨트롤).</p>
+<table>
+<tr><th>blk</th><th>변형</th><th class="num">arrival</th><th class="num">valid (exc)</th><th class="num">valid∧hit (raw)</th><th class="num">rem-path</th><th class="num">rem-edge</th><th class="num">EM</th><th class="num">PC</th></tr>
+<tr><td rowspan="4">4</td><td>base</td><td class="num">0.939</td><td class="num">0.253</td><td class="num">0.239</td><td class="num">0.661</td><td class="num">0.051</td><td class="num">0.231</td><td class="num">0.240</td></tr>
+<tr><td>guided (§6.1)</td><td class="num">0.948</td><td class="num">0.315</td><td class="num">0.290</td><td class="num">0.651</td><td class="num">0.050</td><td class="num">0.281</td><td class="num">0.296</td></tr>
+<tr><td>adj-only</td><td class="num">0.873</td><td class="num">0.316</td><td class="num">0.270</td><td class="num">0.502</td><td class="num">0.030</td><td class="num">0.275</td><td class="num">0.291</td></tr>
+<tr><td>adj+guided</td><td class="num">0.868</td><td class="num best">0.368</td><td class="num best">0.316</td><td class="num best">0.495</td><td class="num best">0.030</td><td class="num best">0.316</td><td class="num best">0.337</td></tr>
+<tr><td rowspan="4">8</td><td>base</td><td class="num">0.944</td><td class="num">0.242</td><td class="num">0.229</td><td class="num">0.656</td><td class="num">0.050</td><td class="num">0.211</td><td class="num">0.223</td></tr>
+<tr><td>guided</td><td class="num">0.936</td><td class="num">0.293</td><td class="num">0.271</td><td class="num">0.646</td><td class="num">0.050</td><td class="num">0.272</td><td class="num">0.281</td></tr>
+<tr><td>adj-only</td><td class="num">0.863</td><td class="num">0.296</td><td class="num">0.257</td><td class="num">0.489</td><td class="num">0.031</td><td class="num">0.250</td><td class="num">0.267</td></tr>
+<tr><td>adj+guided</td><td class="num">0.868</td><td class="num best">0.338</td><td class="num best">0.292</td><td class="num best">0.487</td><td class="num">0.031</td><td class="num best">0.300</td><td class="num best">0.315</td></tr>
+<tr><td rowspan="4">16</td><td>base</td><td class="num">0.896</td><td class="num">0.206</td><td class="num">0.181</td><td class="num">0.642</td><td class="num">0.049</td><td class="num">0.177</td><td class="num">0.188</td></tr>
+<tr><td>guided</td><td class="num">0.884</td><td class="num">0.250</td><td class="num">0.215</td><td class="num">0.630</td><td class="num">0.048</td><td class="num">0.214</td><td class="num">0.228</td></tr>
+<tr><td>adj-only</td><td class="num">0.822</td><td class="num">0.264</td><td class="num">0.208</td><td class="num">0.486</td><td class="num">0.031</td><td class="num">0.212</td><td class="num">0.232</td></tr>
+<tr><td>adj+guided</td><td class="num">0.809</td><td class="num best">0.295</td><td class="num best">0.230</td><td class="num best">0.467</td><td class="num">0.030</td><td class="num best">0.246</td><td class="num best">0.265</td></tr>
+<tr><td rowspan="4">32</td><td>base</td><td class="num">0.897</td><td class="num">0.165</td><td class="num">0.153</td><td class="num">0.657</td><td class="num">0.050</td><td class="num">0.136</td><td class="num">0.147</td></tr>
+<tr><td>guided</td><td class="num">0.878</td><td class="num">0.205</td><td class="num">0.169</td><td class="num">0.649</td><td class="num">0.050</td><td class="num">0.165</td><td class="num">0.181</td></tr>
+<tr><td>adj-only</td><td class="num">0.832</td><td class="num">0.212</td><td class="num">0.172</td><td class="num">0.486</td><td class="num">0.031</td><td class="num">0.161</td><td class="num">0.181</td></tr>
+<tr><td>adj+guided</td><td class="num">0.817</td><td class="num best">0.238</td><td class="num best">0.183</td><td class="num">0.504</td><td class="num">0.033</td><td class="num best">0.180</td><td class="num best">0.202</td></tr>
+<tr><td rowspan="4">64</td><td>base</td><td class="num">0.864</td><td class="num">0.164</td><td class="num">0.151</td><td class="num">0.634</td><td class="num">0.048</td><td class="num">0.131</td><td class="num">0.145</td></tr>
+<tr><td>guided</td><td class="num">0.882</td><td class="num">0.204</td><td class="num">0.183</td><td class="num">0.635</td><td class="num">0.048</td><td class="num">0.157</td><td class="num">0.175</td></tr>
+<tr><td>adj-only</td><td class="num">0.805</td><td class="num">0.204</td><td class="num">0.168</td><td class="num">0.488</td><td class="num">0.031</td><td class="num">0.153</td><td class="num">0.173</td></tr>
+<tr><td>adj+guided</td><td class="num">0.818</td><td class="num best">0.243</td><td class="num best">0.193</td><td class="num best">0.480</td><td class="num best">0.030</td><td class="num best">0.179</td><td class="num best">0.205</td></tr>
+</table>
+<p class="small">Pivot: fam 0.1 adj+guided — blk4 valid 0.096 → 0.165, rem-path 0.868 → 0.716 (arrival 0.95 → 0.80); blk16 valid 0.057 → 0.126. 실험 2 disc + adj proposal: blk4 valid 0.366, blk16 0.295 — except_0 전용 disc(0.368 / 0.295)와 구분 불가: proposal을 바꿔도 일반화가 유지됨.</p>
+<ul>
+<li><b>병목은 정말 proposal이었다.</b> 마스킹만으로(adj-only) 제거 edge의 <i>edge 단위</i> 비율이 절반(0.050 → 0.030), rem-path가 0.66 → ~0.49 — 재가중이 이루지 못한 폭. 결합(adj+guided) 시 baseline 대비 validity 총 +9–12%p (blk4: 0.253 → 0.368, 상대 +45%), EM 상대 +37%.</li>
+<li><b>이론이 예측한 그대로의 분업</b>: 제거 edge 회피는 마스킹(proposal)이 담당 — discriminator는 rem-path를 더 줄이지 못함(~0.49 유지) — 재가중은 합법 후보들 위에서 경로 품질을 추가(모든 블록에서 adj-only 대비 valid +4–5%p, EM +0.03–0.04). Lemma 3의 "마스킹은 가중치 0인 후보를 삭제하고, D는 생존자를 순위 매긴다"가 데이터에 그대로 보인다.</li>
+<li><b>비용은 arrival (−4~−9%p)</b>: 불법 지름길이 막힌 모델이 때로 방황하다 miss로 끝난다. §5의 P3 endpoint patch(예외 그래프 기준)가 구조적으로 arrival = 1.0을 복원하므로, <b>adj+guided + A<sub>scn</sub> 기준 P1/P3</b>가 자연스러운 완성형 — 다음 단계로 남김.</li>
+<li><b>잔여 rem-path ≈ 0.49는 Z ≈ 0 폴백에서 발생</b> (상호 불법인 masked 앵커가 unmasked reveal을 강제 — Lemma 3의 후보-내부 caveat) — 남은 누수는 국소적이고 원인이 특정됨.</li>
+<li><b>ESS는 여전히 ≈ 95–99</b>: 합법 후보들끼리도 near-clone. discriminator의 기여는 경로당 ~24회 reveal에 걸쳐 누적되는 작지만 체계적인 미세 조정이며, 추가 여지는 discriminator가 아니라 <i>합법 우회로들 사이의 diversity</i>(repaint식 재마스킹, 혼합 proposal)에 있다.</li>
+</ul>
+
+
+<h3>6.6 Guided 경로의 해부와 예외 그래프 기준 후처리</h3>
+<p class="small">사후 진단: 새 평가 400쌍, adj+guided (mix disc, N = 100); bad edge를 두 그래프 기준으로 분류; P1/P3는 예외 그래프 G<sub>exc</sub> 기준으로 계산.</p>
+<table>
+<tr><th></th><th class="num">blk4</th><th class="num">blk16</th></tr>
+<tr><td>bad edge (edge 단위)</td><td class="num"><b>4.8%</b> (421 / 8,826)</td><td class="num">5.9% (514 / 8,661)</td></tr>
+<tr><td>&nbsp;&nbsp;— removed (normal엔 있었으나 시나리오에서 폐쇄)</td><td class="num">2.9%</td><td class="num">3.0%</td></tr>
+<tr><td>&nbsp;&nbsp;— alien (normal 그래프에도 없던 edge)</td><td class="num">1.9%</td><td class="num">2.9%</td></tr>
+<tr><td>bad edge ≥1개 포함 경로</td><td class="num">62%</td><td class="num">71%</td></tr>
+<tr><td>removed 쌍의 G<sub>exc</sub> 실제 우회 거리</td><td class="num">중앙값 4 hop (≤3은 21%, 최대 15)</td><td class="num">중앙값 4</td></tr>
+<tr><td>alien 쌍의 G<sub>exc</sub> 실제 거리</td><td class="num">중앙값 5 (최대 44)</td><td class="num">중앙값 3 (최대 45)</td></tr>
+</table>
+<ul>
+<li><b>희소하지만 normal 해부(§4.3)보다 사거리가 길다.</b> normal에서는 모든 bad edge가 2–3 hop 국소 스킵(중앙값 3, 91%가 ≤3)이었는데 여기서는 중앙값 4–5. 구조적 이유: removed edge를 밟았다는 건 원래 길이 있었다는 뜻이고, 폐쇄 주변의 진짜 우회로는 본질적으로 길다. alien 잔여(~2–3%)는 Z ≈ 0 폴백으로 새는 것이며 최대 44–45 hop짜리 장거리 순간이동도 소수 포함.</li>
+<li><b>모든 bad 쌍이 수선 가능</b>: P1(G<sub>exc</sub> 최단경로 브리지) + P3(G<sub>exc</sub> 종점 패치)가 400 × 2 경로 전부에서 성공 — 수선 불가 0건.</li>
+</ul>
+<table>
+<tr><th>blk</th><th>변형</th><th class="num">arrival</th><th class="num">valid (exc)</th><th class="num">EM</th><th class="num">PC</th><th class="num">평균 패치</th><th class="num">수선 불가</th></tr>
+<tr><td rowspan="2">4</td><td>adj+guided raw</td><td class="num">0.868</td><td class="num">0.368</td><td class="num">0.316</td><td class="num">0.337</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td>+ P1+P3 (G<sub>exc</sub>)</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.325</td><td class="num best">0.475</td><td class="num">5.3 토큰</td><td class="num">0</td></tr>
+<tr><td rowspan="2">16</td><td>adj+guided raw</td><td class="num">0.809</td><td class="num">0.295</td><td class="num">0.246</td><td class="num">0.265</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td>+ P1+P3 (G<sub>exc</sub>)</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.268</td><td class="num best">0.426</td><td class="num">6.2 토큰</td><td class="num">0</td></tr>
+</table>
+<ul>
+<li><b>PC 급상승 (+0.14–0.16)</b>: 삽입된 G<sub>exc</sub> 최단 브리지가 실제 우회 경로와 겹침 — 패치가 단순 합법화가 아니라 경로를 정답 쪽으로 이동시킨다. 패치 비용(~5–6토큰, 경로의 ≈25%)이 normal 때(+1–2)보다 큰 것은 진짜 우회로가 본질적으로 길기 때문.</li>
+<li><b>전체 시스템 관점 (blk4)</b>: baseline raw EM 0.231 → adj+guided + P1+P3 EM 0.325 (상대 +41%), 여기에 valid = 1 ∧ arrival = 1의 구조적 보장 — 예외 상황 대응 파이프라인의 완성형 후보. (400쌍 진단 기준; 전 block size × 1,000쌍 본 실험이 자연스러운 확정 단계.)</li>
+</ul>
+
+
+<h3>6.7 Negative class의 완결: 순수 모델 분포 discriminator</h3>
+<p>Eq. (2)의 분모는 "normal 데이터"가 아니라 p<sub>θ</sub>다 — 기존 <span class="mono">data</span>/<span class="mono">mix</span> negative는 p<sub>θ</sub> ≈ q<sub>normal</sub> 가정을 낀 근사였다. 이번 라운드가 그 간극을 닫는다: block size마다 해당 체크포인트의 <b>unconditional 생성</b> 20k개(조건 dropout이 ori+dst를 <i>동시에</i> null로 학습하므로 plan(None, None)이 in-distribution)를 negative의 100%로 사용해, 블록별 이론-충실 discriminator를 만들었다 (<span class="mono">BDdisc_*_model_blk{B}</span>). disc 입력은 캔버스 형식([dst = 경로 자신의 종점, path…])을 유지해 형식 차이로 컨닝하지 못하게 했다; 잔여 근사는 unconditional p<sub>θ</sub>(x)가 OD-조건부 p<sub>θ</sub>(x | od)가 아닌 주변분포라는 점.</p>
+<table>
+<tr><th>blk</th><th class="num">valid: base</th><th class="num">neg = data</th><th class="num">neg = mix</th><th class="num">neg = <b>model</b></th><th class="num">adj+mix</th><th class="num">adj+<b>model</b></th></tr>
+<tr><td>4</td><td class="num">0.253</td><td class="num">0.306</td><td class="num">0.315</td><td class="num best">0.321</td><td class="num">0.368</td><td class="num best">0.371</td></tr>
+<tr><td>8</td><td class="num">0.242</td><td class="num">0.286</td><td class="num">0.293</td><td class="num best">0.297</td><td class="num">0.338</td><td class="num best">0.343</td></tr>
+<tr><td>16</td><td class="num">0.206</td><td class="num">0.245</td><td class="num">0.250</td><td class="num best">0.267</td><td class="num">0.295</td><td class="num best">0.307</td></tr>
+<tr><td>32</td><td class="num">0.165</td><td class="num">0.199</td><td class="num">0.205</td><td class="num best">0.222</td><td class="num">0.238</td><td class="num best">0.253</td></tr>
+<tr><td>64</td><td class="num">0.164</td><td class="num">0.205</td><td class="num">0.204</td><td class="num best">0.221</td><td class="num">0.243</td><td class="num best">0.248</td></tr>
+</table>
+<p class="small">valid (exc) 기준; EM/PC도 같은 순서 (예: blk32 EM 0.156 → 0.165 → 0.177 plain; adj 0.180 → 0.192). arrival, rem-path, ESS는 negative class와 무관 — discriminator는 proposal이 내놓는 것을 바꿀 수 없고 순위만 매길 수 있다.</p>
+<ul>
+<li><b>이론적 순서가 단조롭게 실현됨</b>: 모든 block size에서, plain·adj+guided 모두 data &lt; mix &lt; model (10/10 비교). negative class가 진짜 분모 p<sub>θ</sub>에 가까울수록 guidance가 좋아진다.</li>
+<li><b>이득은 블록이 클수록 커진다</b> (blk4는 mix 대비 +0.6%p, blk32/64는 +1.7%p): 큰 블록일수록 모델 분포가 normal 데이터에서 더 멀어지므로(§1의 validity 감쇠) p<sub>θ</sub> ≈ q<sub>normal</sub> 가정이 더 깨지고, 충실한 분모의 가치가 커진다.</li>
+<li><b>현재까지 최고 수치</b> (adj + model-negative disc): blk4 valid 0.371 / EM 0.320 raw — baseline 0.253 / 0.231 대비 — 후처리 없이. §6.6의 P1+P3를 얹으면 valid = arrival = 1.</li>
+</ul>
+
+
+<h3>6.8 3자 심층 분석: base / modelD / adj+modelD, 후처리 전후</h3>
+<p class="small">평가 1,000쌍, blk 4/16, model-negative disc; inv-node = invalid edge에 접한 생성 정점의 비율; P1/P3는 G<sub>exc</sub> 기준. 새 생성 시드라 raw 값은 §6.1/6.7 대비 통상 ±1%p 이내에서 다름. 전체 24행(P1 단독 / P3 단독 포함)은 <span class="mono">sets_log/threeway.log</span>.</p>
+<table>
+<tr><th>blk</th><th>구성</th><th>변형</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM</th><th class="num">PC</th><th class="num">inv-edge</th><th class="num">inv-node</th><th class="num">rem-edge</th><th class="num">patch</th></tr>
+<tr><td>4</td><td>base</td><td>raw</td><td class="num">0.963</td><td class="num">0.242</td><td class="num">0.222</td><td class="num">0.230</td><td class="num">6.44%</td><td class="num">11.89%</td><td class="num">5.07%</td><td class="num">—</td></tr>
+<tr><td>4</td><td>base</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.257</td><td class="num">0.417</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">6.3</td></tr>
+<tr><td>4</td><td>modelD</td><td>raw</td><td class="num">0.952</td><td class="num">0.327</td><td class="num">0.291</td><td class="num">0.305</td><td class="num">5.47%</td><td class="num">10.19%</td><td class="num">4.98%</td><td class="num">—</td></tr>
+<tr><td>4</td><td>modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.306</td><td class="num">0.461</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">5.3</td></tr>
+<tr><td>4</td><td>adj+modelD</td><td>raw</td><td class="num">0.861</td><td class="num">0.372</td><td class="num">0.315</td><td class="num">0.339</td><td class="num">4.77%</td><td class="num">8.71%</td><td class="num">2.85%</td><td class="num">—</td></tr>
+<tr><td>4</td><td>adj+modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num best">0.331</td><td class="num best">0.476</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">5.3</td></tr>
+<tr><td>16</td><td>base</td><td>raw</td><td class="num">0.897</td><td class="num">0.187</td><td class="num">0.166</td><td class="num">0.174</td><td class="num">7.65%</td><td class="num">13.92%</td><td class="num">4.78%</td><td class="num">—</td></tr>
+<tr><td>16</td><td>base</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.204</td><td class="num">0.375</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">7.2</td></tr>
+<tr><td>16</td><td>modelD</td><td>raw</td><td class="num">0.895</td><td class="num">0.252</td><td class="num">0.217</td><td class="num">0.230</td><td class="num">7.12%</td><td class="num">12.99%</td><td class="num">4.77%</td><td class="num">—</td></tr>
+<tr><td>16</td><td>modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.250</td><td class="num">0.406</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">7.2</td></tr>
+<tr><td>16</td><td>adj+modelD</td><td>raw</td><td class="num">0.822</td><td class="num">0.288</td><td class="num">0.241</td><td class="num">0.258</td><td class="num">5.87%</td><td class="num">10.78%</td><td class="num">2.95%</td><td class="num">—</td></tr>
+<tr><td>16</td><td>adj+modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num best">0.283</td><td class="num best">0.435</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">6.1</td></tr>
+</table>
+<ul>
+<li><b>각 메커니즘이 invalid 구조를 깎는 지점 (raw 행).</b> discriminator는 <i>alien</i> 성분(제거 아닌 invalid edge: blk4에서 1.37% → 0.49%)을 깎지만 removed edge(~5.0%)는 못 건드린다 — normal로 학습된 모델에게 그 edge는 완전히 정상으로 보이기 때문. 반면 adjacency 마스킹은 removed 성분을 절반으로(5.0% → 2.9%). 합치면 invalid-node 비율 11.9% → 8.7% (blk4), 13.9% → 10.8% (blk16).</li>
+<li><b>후처리는 품질 순위를 평준화하지 않고 보존한다</b>: 모든 변형에서 EM·PC 기준 base &lt; modelD &lt; adj+modelD (예: P1+P3 blk4 EM 0.257 &lt; 0.306 &lt; 0.331). 좋은 raw 경로가 좋은 최종 경로로 패치된다 — guidance와 후처리는 합성 가능하다.</li>
+<li><b>정직한 기여 분해</b>: 후처리만으로도(base + P1+P3) valid = arrival = 1에 EM 0.204–0.257이 확보되고, guidance 스택은 그 위에 상대 EM +29–39% (blk4 0.257 → 0.331, blk16 0.204 → 0.283), PC +14–16%를 얹는다. PC의 엔진은 P1 (+0.15–0.19: G<sub>exc</sub> 브리지가 실제 우회로와 겹침); P3는 거의 공짜 (0.1–0.8토큰).</li>
+<li><b>잔여 사항</b>: blk16 adj+modelD에서 P1 단독은 valid 0.993 (G<sub>exc</sub>에서 연결 불가한 쌍 소수); P1+P3 조합은 1.000으로 마감.</li>
+</ul>
+
+
+<h3>6.9 MDLM vs. uniform-state diffusion (GDP): blk64 정면 비교</h3>
+<p>모든 경로가 한 64-블록에 들어가므로(데이터 최대 길이 59) blk64는 사실상 <b>full-canvas 영역</b>이다: mask 커널은 MDLM(고정 64-캔버스, END 패딩, PAD 블록 없음)이 되고, graph 커널 blk64 모델은 정확히 <b>GDP 논문의 uniform-state CTMC diffusion</b>(⟨end⟩-확장 상태공간, d = 2.0, 100-step reverse, 인접행렬 제약 디코드)이다. 후자를 같은 normal 데이터로 학습(49.5분)하고 §6.8과 동일한 프로토콜을 적용했다; guided uniform 샘플러는 GDP 수식을 그대로 구현한다(매 reverse 스텝에서 MC-posterior의 x̂₀를 D/(1−D) 가중 후보 평균으로 교체; adj 시 최종 제약 디코드가 A<sub>exc</sub>에서 동작). discriminator는 각 모델 자신의 unconditional pool에서 만든 model-negative.</p>
+<table>
+<tr><th>커널</th><th>구성</th><th>변형</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM</th><th class="num">PC</th><th class="num">inv-edge</th><th class="num">rem-edge</th><th class="num">patch</th><th class="num">ESS</th></tr>
+<tr><td>mask64 (MDLM)</td><td>base</td><td>raw</td><td class="num">0.874</td><td class="num">0.151</td><td class="num">0.120</td><td class="num">0.133</td><td class="num">8.6%</td><td class="num">4.9%</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td>mask64</td><td>base</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.193</td><td class="num">0.361</td><td class="num">0%</td><td class="num">0%</td><td class="num">7.1</td><td class="num">—</td></tr>
+<tr><td>mask64</td><td>modelD</td><td>raw</td><td class="num">0.888</td><td class="num">0.222</td><td class="num">0.173</td><td class="num">0.192</td><td class="num">8.4%</td><td class="num">4.8%</td><td class="num">—</td><td class="num">94.9</td></tr>
+<tr><td>mask64</td><td>modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.220</td><td class="num">0.379</td><td class="num">0%</td><td class="num">0%</td><td class="num">7.6</td><td class="num">—</td></tr>
+<tr><td>mask64</td><td>adj+modelD</td><td>raw</td><td class="num">0.806</td><td class="num">0.251</td><td class="num">0.183</td><td class="num">0.211</td><td class="num">6.8%</td><td class="num">3.0%</td><td class="num">—</td><td class="num">95.1</td></tr>
+<tr><td>mask64</td><td>adj+modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.234</td><td class="num">0.401</td><td class="num">0%</td><td class="num">0%</td><td class="num">6.8</td><td class="num">—</td></tr>
+<tr><td>graph64 (uniform)</td><td>base</td><td>raw</td><td class="num">0.043</td><td class="num">0.460</td><td class="num">0.080</td><td class="num">0.200</td><td class="num">5.1%</td><td class="num">5.1%</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td>graph64</td><td>base</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.051</td><td class="num">0.233</td><td class="num">0%</td><td class="num">0%</td><td class="num">11.9</td><td class="num">—</td></tr>
+<tr><td>graph64</td><td>modelD</td><td>raw</td><td class="num">0.018</td><td class="num">0.645</td><td class="num">0.144</td><td class="num">0.307</td><td class="num">5.2%</td><td class="num">5.2%</td><td class="num">—</td><td class="num">97.1</td></tr>
+<tr><td>graph64</td><td>modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.075</td><td class="num">0.254</td><td class="num">0%</td><td class="num">0%</td><td class="num">18.7</td><td class="num">—</td></tr>
+<tr><td>graph64</td><td>adj+modelD</td><td>raw</td><td class="num">0.007</td><td class="num">0.985</td><td class="num">0.220</td><td class="num">0.463</td><td class="num">0.0%</td><td class="num">0.0%</td><td class="num">—</td><td class="num">97.1</td></tr>
+<tr><td>graph64</td><td>adj+modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.105</td><td class="num">0.307</td><td class="num">0%</td><td class="num">0%</td><td class="num">18.9</td><td class="num">—</td></tr>
+</table>
+<ul>
+<li><b>두 커널은 정반대 방식으로 실패한다.</b> MDLM/mask는 도착하지만(0.87) edge를 깬다(valid 0.15); uniform은 edge를 지키지만(valid 0.46, 내장 제약 디코드 덕에 alien edge 0 — 위반은 오직 removed edge뿐) 거의 도착하지 못한다(0.04, 이전 보고서의 graph 커널 프로파일 재현).</li>
+<li><b>guidance는 uniform 커널에서 훨씬 세게 듣는다</b> — 동반 문서 §6의 예측 확인: 재가중만으로 valid 0.460 → 0.645 (+18.5%p; mask는 +7.1%p), 시나리오-인접행렬 디코드까지 결합하면 <b>raw에서 valid 0.985, invalid edge 0.00%</b> — 후처리 전에 validity 문제가 사실상 해결된다. 주목할 점: ESS는 두 커널 모두 ~97 — uniform의 우위는 가중치 다양성이 아니라 <b>수정 가능성(revisability)</b>이다. 100번의 재샘플링 스텝이 작은 넛지를 복리로 누적하는 반면, mask의 비가역 reveal은 넛지 한 번 뒤 결정을 잠근다.</li>
+<li><b>그러나 guidance는 uniform의 arrival을 사주지 못한다</b> (0.043 → 0.007). 후처리가 경로당 ~19토큰을 이식해야 하고(최종 경로의 절반이 패치), 합성 품질은 낮게 남는다: EM 0.105 / PC 0.307 vs mask64의 0.234 / 0.401. P1+P3 보장 이후에도 <b>end-to-end 승자는 mask 커널</b> — arrival은 모델이 공급해야 하는데, 그것을 주는 쪽은 mask뿐이다.</li>
+<li><b>방법론 관점의 독해</b>: IW guidance가 빛나는 곳은 uniform 커널(크고 메커니즘이 깨끗한 개선), 과제가 풀리는 곳은 mask 커널이다. blk64 쌍이 설계 공간의 양 끝을 보여준다 — 수정 가능하지만 길을 잃는 쪽 vs 결단력 있지만 거친 쪽 — 그리고 §6.8의 완성형(small-block mask + adj + modelD + P1/P3)이 여전히 최적 운용점이다.</li>
+</ul>
+<p><b>uniform 커널의 경로가 실제로 끝나는 곳</b> (400쌍 진단, 미도달 경로의 종착점→dst G<sub>exc</sub> hop 거리):</p>
+<table>
+<tr><th></th><th class="num">arrival</th><th class="num">중앙값 hops</th><th class="num">평균</th><th class="num">≤5 hops</th><th class="num">생성 길이 (실제 24.1)</th><th class="num">len corr</th></tr>
+<tr><td>mask64 (참고, §4.2 프로파일)</td><td class="num">0.87</td><td class="num">1</td><td class="num">~2</td><td class="num">98%</td><td class="num">≈ 실제</td><td class="num">0.99</td></tr>
+<tr><td>graph64 base</td><td class="num">0.040</td><td class="num">5</td><td class="num">8.6</td><td class="num">53%</td><td class="num">18.4</td><td class="num">0.735</td></tr>
+<tr><td>graph64 adj+modelD</td><td class="num">0.005</td><td class="num">17</td><td class="num">19.1</td><td class="num">12%</td><td class="num">9.7</td><td class="num">0.166</td></tr>
+</table>
+<ul>
+<li><b>질적으로 다른 세 가지 실패.</b> mask의 miss는 문 앞 토큰 식별 실수(중앙값 1 hop); 순수 uniform은 <i>동네에서 길을 잃음</i>(중앙값 5 hop, 길이 부족 18.4 vs 24.1); guided+제약 uniform은 <i>중간에 포기</i> — dst에서 중앙값 17 hop, 실제 길이의 40%(9.7토큰, len corr 0.17)에서 종료.</li>
+<li><b>조기 종료의 메커니즘</b>: 제약 디코드에서 모든 이동은 직전 정점의 이웃으로 마스킹되는데 ⟨end⟩ 상태는 항상 합법이다. x̄₀의 질량이 이웃 아닌 정점들에 있을 때마다 마스킹 후 ⟨end⟩가 상대적으로 커져 걷기가 끝난다. 따라서 uniform의 대표 수치 valid = 0.985는 완벽히 합법적인 <i>반쪽 산책</i>이다 — validity를 arrival-by-length로 지불한 것으로, P3가 ~19토큰을 이식해야 했고 합성 EM이 낮게 남은 이유가 정확히 이것이다. 이는 §6.9의 판정을 더 선명하게 한다: mask의 "결단력 있지만 거친" 실패가 수리 비용이 더 싼 쪽이다.</li>
+</ul>
+
+
+
+<h3>6.10 Forward 커널 ablation: GDP graph-CTMC vs. 순수 uniform-state (D3PM)</h3>
+<p><b>두 forward 커널.</b> GDP의 커널은 <i>도로 그래프를 따라</i> 확산한다: (⟨end⟩-확장) 인접행렬로 만든 generator G = A′ − D′로</p>
+<p class="eq">Q<sub>t</sub><sup>graph</sup> = exp((A′ − D′) β<sub>t</sub>) — 국소 이동, 느린 전역 혼합(작은 스펙트럴 갭), x<sub>t</sub>에 그래프 구조가 보존됨.</p>
+<p>고전적인 <b>순수 uniform-state</b> 커널은 완전 그래프 특수 사례 A′ = 𝟙𝟙<sup>T</sup>이며 닫힌 형태를 갖는다:</p>
+<p class="eq">Q<sub>t</sub><sup>unif</sup> = e<sup>−Kβ<sub>t</sub></sup> I + (1 − e<sup>−Kβ<sub>t</sub></sup>) 𝟙𝟙<sup>T</sup>/K &nbsp;⇔&nbsp; ᾱ<sub>t</sub> = e<sup>−K Σ<sub>s≤t</sub>β<sub>s</sub></sup>인 D3PM-uniform (K = V+1 상태),</p>
+<p>즉 생존-또는-균등-순간이동 — 그래프 구조가 어디에도 없다. 같은 Destroyer에 완전 그래프를 넘겨 구현; 완전 그래프의 스펙트럴 갭이 K라 원래 스케줄이면 t = 2에 완전히 섞이므로 β를 1/K로 스케일(7×10⁻⁸ … 7.2×10⁻³)해 스텝당 생존 프로파일을 graph 커널과 정렬; connectivity loss는 끄고 내장 제약 디코드는 완전 그래프라 자동 무제약 — 구성상 "순수" 세팅. 백본·데이터·1 epoch 예산(48.9분)·D3PM ELBO·blk64(=full canvas)·§6.8 프로토콜 전부 동일.</p>
+<table>
+<tr><th>구성</th><th>변형</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM</th><th class="num">PC</th><th class="num">inv-edge</th><th class="num">rem-edge</th><th class="num">patch</th><th class="num">ESS</th></tr>
+<tr><td rowspan="2">base</td><td>raw</td><td class="num">0.086</td><td class="num">0.001</td><td class="num">0.001</td><td class="num">0.001</td><td class="num">82.9%</td><td class="num">0.9%</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.002</td><td class="num">0.032</td><td class="num">0%</td><td class="num">0%</td><td class="num">58.8</td><td class="num">—</td></tr>
+<tr><td rowspan="2">modelD</td><td>raw</td><td class="num">0.092</td><td class="num">0.006</td><td class="num">0.005</td><td class="num">0.006</td><td class="num">82.3%</td><td class="num">1.0%</td><td class="num">—</td><td class="num">91.3</td></tr>
+<tr><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.017</td><td class="num">0.048</td><td class="num">0%</td><td class="num">0%</td><td class="num">58.0</td><td class="num">—</td></tr>
+<tr><td rowspan="2">adj+modelD</td><td>raw</td><td class="num">0.002</td><td class="num">0.967</td><td class="num">0.084</td><td class="num">0.342</td><td class="num">0.0%</td><td class="num">0.0%</td><td class="num">—</td><td class="num">91.3</td></tr>
+<tr><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.066</td><td class="num">0.250</td><td class="num">0%</td><td class="num">0%</td><td class="num">20.2</td><td class="num">—</td></tr>
+</table>
+<ul>
+<li><b>순수 uniform 커널은 이 과제에서 붕괴한다</b>: raw valid 0.001, invalid edge 82.9% — 거의 전부 <i>alien</i>(rem-edge는 0.9%뿐)으로, 사실상 무작위 정점 수열이다. P1이 경로당 53토큰(경로 길이의 3배)을 이식해야 하고 어떤 처리를 해도 EM ≤ 0.07. 같은 예산의 graph forward는 valid 0.460, inv-edge 5.1% — <b>GDP의 그래프-구조 forward가 uniform-state diffusion을 성립시키는 요소</b>이며, 노이즈의 국소성은 장식이 아니라 0.46과 0.001의 차이다.</li>
+<li><b>guidance는 이를 구하지 못하며, 그 이유가 negative-class 설계에 교훈을 준다</b>: model-negative disc는 학습 정확도 0.999(자기 negative — 모델의 unconditional 샘플 — 가 자명하게 구분되는 쓰레기라서)에 도달하지만 실제 경로에는 <b>우연 수준(0.527)</b>으로만 전이된다. D가 "예외인가?"가 아니라 "무작위 수열인가?"를 배운 것이다. p<sub>θ</sub>가 데이터 매니폴드에서 아주 멀면 Eq. 2의 분모 클래스가 정작 필요한 곳에서 신호를 갖지 못한다 — data/mix negative가 더 잘 다룰 엣지 케이스.</li>
+<li><b>하드 제약만이 유일한 지렛대</b>: A<sub>exc</sub>-제약 디코드가 validity를 0.967로 올리지만, 걷기는 graph64보다 더 길을 잃는다 (endpoint patch 20토큰; 합성 EM 0.066, 세 커널 중 최하).</li>
+<li><b>Full-canvas 커널 순위</b> (raw valid / P1+P3 후 EM): mask64 0.15 / 0.234 · graph64 0.46 / 0.105 · uniform64 0.001 / 0.066 — forward의 구조는 validity를 사고(graph &gt; mask &gt; uniform), 디코딩의 결단력은 arrival과 최종 품질을 산다(mask ≫ graph ≫ uniform).</li>
+</ul>
+
+
+<h3>6.11 발표된 baseline과의 비교: D-CBG (Schiff et al.)</h3>
+<p><span class="mono">kuleshov-group/discrete-diffusion-guidance</span>의 plug-in 이식 (이 저장소 파일 수정 0건; <span class="mono">dcbg_plugin.py</span>가 그들의 <span class="mono">_cbg_denoise</span> 로직을 담음): <b>노이즈-조건 분류기</b> p(y | x<sub>t</sub>, t) — 그들 프로토콜: 라벨된 데이터(exceptional vs normal, 같은 1% 예산/split)를 생성 시점 forward corruption으로 오염 — 가 posterior를 γ·log p(y | x<sub>t</sub><sup>ℓ→k</sup>)로 기울인다. mask 커널: 공개 위치에서의 <b>exact 열거</b>(first-hitting 하에서 정확; reveal당 |V|회 분류기 호출); graph 커널: 그들의 <b>1차(Taylor) 근사</b>. γ ∈ {1, 2, 4}; 평가 동일.</p>
+<table>
+<tr><th>구성</th><th>방법</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM raw</th><th class="num">rem-edge</th><th class="num">inv-edge</th><th class="num">EM P1+P3</th><th class="num">PC P1+P3</th><th class="num">s/path</th></tr>
+<tr><td rowspan="4">mask blk4</td><td>base</td><td class="num">0.963</td><td class="num">0.242</td><td class="num">0.222</td><td class="num">5.1%</td><td class="num">6.4%</td><td class="num">0.257</td><td class="num">0.417</td><td class="num">0.01</td></tr>
+<tr><td>D-CBG γ=4 (최적 γ)</td><td class="num">0.907</td><td class="num">0.267</td><td class="num">0.248</td><td class="num best">2.2%</td><td class="num">9.0%</td><td class="num">0.309</td><td class="num">0.436</td><td class="num">2.7</td></tr>
+<tr><td>우리 (IW, modelD)</td><td class="num">0.952</td><td class="num">0.327</td><td class="num">0.291</td><td class="num">5.0%</td><td class="num">5.5%</td><td class="num">0.306</td><td class="num">0.461</td><td class="num">0.03</td></tr>
+<tr><td><b>우리 (adj+modelD)</b></td><td class="num">0.861</td><td class="num best">0.372</td><td class="num best">0.315</td><td class="num">2.9%</td><td class="num best">4.8%</td><td class="num best">0.331</td><td class="num best">0.476</td><td class="num">0.05</td></tr>
+<tr><td rowspan="3">mask blk64</td><td>base</td><td class="num">0.874</td><td class="num">0.151</td><td class="num">0.120</td><td class="num">4.9%</td><td class="num">8.6%</td><td class="num">0.193</td><td class="num">0.361</td><td class="num">0.01</td></tr>
+<tr><td>D-CBG γ=4</td><td class="num">0.844</td><td class="num">0.156</td><td class="num">0.124</td><td class="num">2.2%</td><td class="num">9.6%</td><td class="num">0.228</td><td class="num">0.386</td><td class="num">2.7</td></tr>
+<tr><td><b>우리 (adj+modelD)</b></td><td class="num">0.806</td><td class="num best">0.251</td><td class="num best">0.183</td><td class="num">3.0%</td><td class="num best">6.8%</td><td class="num best">0.234</td><td class="num best">0.401</td><td class="num">0.09</td></tr>
+<tr><td rowspan="3">graph blk64</td><td>base</td><td class="num">0.043</td><td class="num">0.460</td><td class="num">0.080</td><td class="num">5.1%</td><td class="num">5.1%</td><td class="num">0.051</td><td class="num">0.233</td><td class="num">0.06</td></tr>
+<tr><td>D-CBG γ∈{1,2,4}</td><td class="num">0.025</td><td class="num">0.459–0.470</td><td class="num">0.085</td><td class="num">5.0%</td><td class="num">5.0%</td><td class="num">0.054</td><td class="num">0.235</td><td class="num">2.8</td></tr>
+<tr><td><b>우리 (adj+modelD)</b></td><td class="num">0.007</td><td class="num best">0.985</td><td class="num best">0.220</td><td class="num best">0.0%</td><td class="num best">0.0%</td><td class="num best">0.105</td><td class="num best">0.307</td><td class="num">0.09</td></tr>
+</table>
+<p class="small">분류기 검증 정확도 (그들 프로토콜, 생성 시점 corruption 기준): mask blk4 0.719, mask blk64 0.734 — 우리 disc와 비슷 — 그러나 <b>graph/CTMC는 0.512 (우연 수준)</b>: uniform-CTMC로 오염된 경로에서 노이즈-상태 분류기가 이 데이터 예산으로는 학습되지 않아 graph D-CBG는 무력(해당 행 ≈ base). 우리의 클린 부분-경로 discriminator(Lemma 1 정식화)는 노이즈-상태 분류 자체를 우회한다.</p>
+<ul>
+<li><b>D-CBG가 진짜 강한 지점</b>: 위치별 열거 덕에 removed edge를 직접 벌줄 수 있다 — γ = 4에서 비-인접행렬 방법 중 최저 removed-edge율(2.2%, 우리 순수 재가중 5.0% 대비). 단 γ = 4는 되어야 작동한다 (γ ≤ 2 ≈ base).</li>
+<li><b>그 대가</b>: 위치별 tilting이 모델의 결합분포와 싸우면서 전체 invalid edge가 <i>증가</i>(blk4: 6.4% → 9.0%; removed가 alien으로 대체됨)하고 arrival이 하락. 우리의 joint 후보 재가중은 후보가 구성상 모델-일관적이라 validity와 EM이 <i>함께</i> 개선된다.</li>
+<li><b>End-to-end에서는 모든 셀에서 우리가 우세</b>: blk4 합성 EM/PC 0.331/0.476 (우리) vs 0.309/0.436 (D-CBG 최적 γ); blk64·graph64도 동일 — 그것도 <b>guidance 비용 30–90배 절감</b>(0.03–0.09 vs exact 열거 ≈2.7 s/path)으로.</li>
+<li><b>시나리오 전이</b>: D-CBG 분류기는 인접행렬을 입력받지 않아 새 시나리오마다 재학습이 필요; 우리 discriminator는 unseen 시나리오로 일반화(§6.2, 실험 2) — 논문 비교표가 가져야 할 열.</li>
+</ul>
+
+
+<h3>6.12 통제된 2×2: 메커니즘 × 분류기, 나머지 전부 일치</h3>
+<p>§6.11은 guidance <i>메커니즘</i>과 분류기 <i>설계</i>가 교락되어 있었다. 이번 라운드는 이를 통제한다: 네 셀 모두 동일한 분류기 아키텍처(임베딩 · GraphSAGE · edge-existence/deg-ratio 채널 · 인코더 · masked pooling · bounded logit · label smoothing)와 동일한 학습 프로토콜(라벨 데이터: exceptional 1% vs normal, 같은 split)을 공유한다. 남은 차이는 방법 내재적인 것뿐: D-CBG의 분류기는 수식이 요구하는 대로 <i>노이즈</i> 상태 (x<sub>t</sub>, t)를 읽고, 우리는 Lemma 1이 요구하는 대로 <i>클린 부분 경로</i>를 읽는다 — 그리고 출력의 사용 방식(위치별 tilting vs joint 후보 재가중). 2×2에는 proposal 마스킹 없음(별도의 합성 가능한 레버로 유지).</p>
+<table>
+<tr><th>구성</th><th>셀</th><th class="num">clf val</th><th class="num">arrival</th><th class="num">valid raw</th><th class="num">inv-edge</th><th class="num">rem-edge</th><th class="num">EM P1+P3</th></tr>
+<tr><td rowspan="4">mask blk4</td><td>D-CBG + plain (γ=4)</td><td class="num">0.719</td><td class="num">0.907</td><td class="num">0.267</td><td class="num">9.0%</td><td class="num">2.2%</td><td class="num">0.309</td></tr>
+<tr><td>D-CBG + adj (γ=4)</td><td class="num">0.746</td><td class="num">0.939</td><td class="num">0.289</td><td class="num">6.1%</td><td class="num">4.4%</td><td class="num">0.290</td></tr>
+<tr><td>IW + plain</td><td class="num">0.676</td><td class="num">0.948</td><td class="num">0.255</td><td class="num">6.4%</td><td class="num">4.9%</td><td class="num">0.271</td></tr>
+<tr><td><b>IW + adj</b></td><td class="num">0.71</td><td class="num">0.948</td><td class="num best">0.306</td><td class="num">5.8%</td><td class="num">5.0%</td><td class="num">—</td></tr>
+<tr><td rowspan="4">mask blk64</td><td>D-CBG + plain (γ=4)</td><td class="num">0.734</td><td class="num">0.844</td><td class="num">0.156</td><td class="num">9.6%</td><td class="num">2.2%</td><td class="num">0.228</td></tr>
+<tr><td>D-CBG + adj (γ=4)</td><td class="num">0.750</td><td class="num">0.844</td><td class="num">0.181</td><td class="num">8.4%</td><td class="num">3.5%</td><td class="num">0.214</td></tr>
+<tr><td>IW + plain</td><td class="num">0.676</td><td class="num">0.883</td><td class="num">0.172</td><td class="num">8.6%</td><td class="num">4.6%</td><td class="num">0.204</td></tr>
+<tr><td><b>IW + adj</b></td><td class="num">0.71</td><td class="num">0.876</td><td class="num best">0.205</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td rowspan="3">graph blk64</td><td>D-CBG + adj (모든 γ)</td><td class="num">0.531</td><td class="num">0.03</td><td class="num">0.466–0.469</td><td class="num">5.0%</td><td class="num">5.0%</td><td class="num">0.056</td></tr>
+<tr><td>IW + adj (data)</td><td class="num">0.71</td><td class="num">0.015</td><td class="num">0.656</td><td class="num">5.0%</td><td class="num">5.0%</td><td class="num">0.080</td></tr>
+<tr><td><b>IW + plain</b> (ESS 31!)</td><td class="num">0.676</td><td class="num">0.019</td><td class="num best">0.708</td><td class="num">4.1%</td><td class="num">4.1%</td><td class="num">0.084</td></tr>
+</table>
+<p class="small">IW 행은 guidance만(proposal 마스킹 없음); "IW + adj" 셀은 §6.1의 data-negative 런 재사용(그 런에서는 합성 EM 미측정). 모든 구성에서 γ ≤ 2의 D-CBG는 ≈ base. 합성 가능한 adjacency-masked proposal을 얹으면 IW + plain이 blk4에서 valid 0.327, 그리고 graph64의 새로운 최고 기록 — <b>valid 0.988, raw EM 0.233</b> (IW + plain + adj-proposal) — 에 도달한다.</p>
+<ul>
+<li><b>사용자 가설이 실증됨: adjacency-aware 분류기는 두 방법 모두를 돕는다.</b> D-CBG는 두 block size에서 valid +2.2–2.5%p (clf val 0.72 → 0.75), 그리고 더 흥미롭게도 adjacency 채널이 <i>D-CBG의 일관성 손상을 제거</i>한다 (blk4 inv-edge 9.0% → 6.1%): 합법성을 직접 보게 되니 alien edge를 만들어내던 극단적 tilt가 불필요해진다.</li>
+<li><b>분류기를 맞추면 두 메커니즘의 격차는 §6.11이 시사한 것보다 좁다</b>: adj-vs-adj에서는 IW 승(0.306 vs 0.289; 0.205 vs 0.181); plain-vs-plain은 갈림(blk4는 D-CBG 0.267 &gt; IW 0.255; blk64는 IW 0.172 &gt; D-CBG 0.156). 따라서 메커니즘 수준에서 IW의 정직한 주장은: 조정할 γ가 없음(D-CBG는 γ = 4 미만에서 무력), arrival 보존(0.95 vs 0.84–0.94), 30–90배 낮은 비용, proposal 마스킹과의 자유로운 합성.</li>
+<li><b>구조적 논거는 통제 후에도 생존</b>: adjacency 아키텍처를 맞춰도 D-CBG의 분류기는 CTMC 커널에서 우연 수준(0.531) — 병목은 아키텍처가 아니라 <i>노이즈-입력 분류 문제 자체</i>이며, 이를 우회하는 클린-부분-경로 입력은 IW 정식화(Lemma 1)에서만 가능하다. graph 커널에서 메커니즘 격차는 결정적: 0.47 (D-CBG) vs 0.71 (IW).</li>
+<li><b>예상 밖의 발견</b>: graph 커널에서는 PLAIN 부분-경로 discriminator가 adjacency-aware보다 잘 유도한다 (valid 0.708 vs 0.656), 그것도 극적으로 날카로운 가중치(ESS 31 vs 96 — 이 프로젝트 전체에서 처음 관측된 50 미만 ESS)로. adjacency 피처가 정작 시퀀스-수준 단서가 판별 신호인 지점에서 후보 점수를 균질화하는 것으로 보인다; 설계 규칙을 끌어내기 전에 전용 ablation이 필요하다.</li>
+</ul>
+
+<h2>7. 이전 보고서(RESULTS_BD_prev.pdf)와의 관계</h2>
+<ul>
+<li>이전 보고서는 blk4만, refine 변형과 함께 평가: mask raw 0.952 arrival / 0.820 valid∧hit, refine_es +0.03 arrival, refine_nx는 구조상 arrival 1.0. 본 sweep은 refine을 전부 제거(사용자 요청)하고 block size를 변화시켰다.</li>
+<li>이전 보고서의 "mask 커널에는 refinement가 거의 불필요"라는 결론은 여기서 더 강해진다: blk1의 raw arrival 0.997 — refinement의 여지가 ≤0.3%p.</li>
+<li>graph(uniform-state CTMC) 커널은 이 sweep에 포함되지 않았다(사용자 결정: mask만). 이전 보고서의 대기 작업(d = 0.05 재학습, respaced block sampling)은 미결로 남는다.</li>
+</ul>
+
+<h2>산출물</h2>
+<ul>
+<li>체크포인트: <span class="mono">sets_model/BD_porto_v3_normal_mask_blk{1,2,4,8,16,32,64}_base_bd.pth</span> (+ <span class="mono">_epoch_0</span>), 서버 <span class="mono">143.248.84.179:/home/aailab/wp03052/Synthetic-Data/Block-Diffusion-OD-Planning</span></li>
+<li>결과: <span class="mono">sets_res/BD_porto_v3_normal_mask_blk*_base_bd.res</span> (raw + refine_nx + refine_es 저장; 본 보고서는 raw만), 후처리 비교 <span class="mono">sets_res/BD_mask_blk*_postproc.res</span> (<span class="mono">eval_bd_postproc.py</span>) + 경로별 EM/PC 기록 <span class="mono">sets_res/em_pc/</span></li>
+<li>학습 로그: <span class="mono">sets_log/bd_mask_blk*.log</span>, <span class="mono">sets_model/*_bd_train_log.txt</span></li>
+<li>코드: <span class="mono">models_seq/bd_models.py</span>, <span class="mono">models_seq/bd_trainer.py</span>, <span class="mono">main_bd.py</span>, <span class="mono">train_porto_bd.sh</span>; 실행: tmux 세션 <span class="mono">bd_gpu{0..3}</span> (GPU당 1런)</li>
+<li>Guidance: discriminator <span class="mono">sets_disc/BDdisc_*.pth</span> + pool <span class="mono">sets_disc/neg_pool.pth</span>; 결과 <span class="mono">sets_res/BDguid_*.res</span>; 코드 <span class="mono">models_seq/bd_disc.py</span>, <span class="mono">bd_models.py::plan_guided</span>, <span class="mono">train_bd_disc.py</span>, <span class="mono">eval_bd_guidance.py</span>, <span class="mono">run_bd_guidance_all.sh</span></li>
+<li>문서: 코드 검증 <span class="mono">pdfs/BD_CODE_VERIFICATION_KO/EN.pdf</span>; guidance 수식 <span class="mono">pdfs/BD_GUIDANCE_FORMULATION.pdf</span>; 본 보고서 영어판 <span class="mono">pdfs/RESULTS_BD.pdf</span></li>
+</ul>
+
+</body>
+</html>

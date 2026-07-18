@@ -135,6 +135,7 @@ def get_argparser() -> argparse.ArgumentParser:
     parser.add_argument("-od_max_len", type=int, help="max generated path length", default=100)
     parser.add_argument("-bd_time_cond", help="time conditioning for the mask kernel (graph kernel: always on)", action="store_true")
     parser.add_argument("-bd_eos_deg", type=float, help="total degree d of the virtual <end> CTMC state (graph kernel)", default=0.05)
+    parser.add_argument("-bd_uniform_forward", help="pure uniform-state forward (complete-graph generator = classic D3PM uniform) instead of the GDP graph CTMC", action="store_true")
     parser.add_argument("-length_mode", type=str, help="open | oracle | both (oracle only sets the block budget)", default="open")
 
     # [Edit - Jiwoo] respaced (strided) sampling: fewer reverse steps via exact composed CTMC kernels

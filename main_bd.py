@@ -235,12 +235,19 @@ if __name__ == "__main__":
             # <end> -> <end> stays legal in the binarized decode. Symmetric
             # => the uniform limiting distribution is preserved.
             V = dataset.A.shape[0]
-            w_eos = args.bd_eos_deg / V
-            A_ctmc = torch.zeros(V + 1, V + 1)
-            A_ctmc[:V, :V] = dataset.A.cpu().float()
-            A_ctmc[V, :V] = w_eos
-            A_ctmc[:V, V] = w_eos
-            A_ctmc[V, V] = w_eos
+            if args.bd_uniform_forward:
+                # PURE uniform-state forward kernel (classic D3PM uniform):
+                # complete-graph generator => Q_t = e^{-K b} I + (1-e^{-K b}) 11^T/K
+                # (alpha_t = e^{-K beta_t}); pass betas scaled by 1/K so the
+                # per-step survival profile matches the graph kernel's.
+                A_ctmc = torch.ones(V + 1, V + 1)
+            else:
+                w_eos = args.bd_eos_deg / V
+                A_ctmc = torch.zeros(V + 1, V + 1)
+                A_ctmc[:V, :V] = dataset.A.cpu().float()
+                A_ctmc[V, :V] = w_eos
+                A_ctmc[:V, V] = w_eos
+                A_ctmc[V, V] = w_eos
             destroyer = Destroyer(A_ctmc, betas, args.max_T, device)
 
         backbone = BDTransformer(

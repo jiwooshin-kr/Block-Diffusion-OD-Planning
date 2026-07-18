@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>BD3-LM 원본 코드 정리 및 구현 대조 검증</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Apple SD Gothic Neo", "Noto Sans KR", "Helvetica Neue", sans-serif;
+    font-size: 10.5px; line-height: 1.6; color: #1a1a1a; margin: 0;
+  }
+  h1 { font-size: 19px; border-bottom: 3px solid #1a1a1a; padding-bottom: 8px; margin: 0 0 14px; }
+  h2 { font-size: 14.5px; margin: 26px 0 10px; padding-bottom: 4px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 12px; margin: 18px 0 6px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.3px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.8px; line-height: 1.5;
+        background: #f7f7f7; border: 1px solid #ddd; border-radius: 5px; padding: 8px 10px;
+        overflow-x: hidden; white-space: pre-wrap; margin: 6px 0; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.6px; }
+  th, td { border: 1px solid #bbb; padding: 4px 7px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  .status-box { background: #fff8e6; border: 1.5px solid #e6c260; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .ok   { color: #0a7a2f; font-weight: 700; }
+  .diff { color: #b25000; font-weight: 700; }
+  .add  { color: #0b5bd3; font-weight: 700; }
+  .warn { color: #b00020; font-weight: 700; }
+  .small { font-size: 9px; color: #555; }
+  .cols { display: flex; gap: 10px; }
+  .cols > div { flex: 1; min-width: 0; }
+  .colhead { font-weight: 700; font-size: 9.5px; margin-bottom: 2px; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .pagebreak { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>BD3-LM 원본 코드 정리 &amp; 로컬 구현 대조 검증</h1>
+<p class="small">2026-07-16 · 원본: <span class="mono">github.com/kuleshov-group/bd3lms</span> (Arriola et al., "Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models", ICLR 2025) · 로컬: <span class="mono">models_seq/bd_models.py</span>, <span class="mono">models_seq/bd_trainer.py</span>, <span class="mono">main_bd.py</span></p>
+
+<div class="status-box">
+<b>"대조 검증 통과"의 정확한 의미.</b> 원본 저장소를 클론하여 mask 커널의 핵심 5개 구성 요소(어텐션 마스크, 벡터화 학습, SUBS loss, first-hitting 샘플러, semi-AR 생성 루프)를 코드 수준에서 나란히 비교했고, <b>다섯 요소 모두 원본과 동일한 수식·알고리즘을 계산함</b>을 확인했다는 뜻이다. 이 검증이 의미하지 <u>않는</u> 것: (1) 동일 가중치를 두 구현에 넣고 출력을 수치 비교하는 등가성 테스트는 수행하지 않았다 (두 코드는 vocabulary·conditioning이 달라 직접 비교가 불가능). (2) 원본의 모든 기능이 이식됐다는 뜻이 아니다 — EMA, clipped schedule 등은 의도적으로 제외됐고 아래 §4에 전부 나열했다. (3) graph(uniform) 커널은 애초에 bd3lms 이식 대상이 아니라 이 저장소 <span class="mono">seq_models.py</span>의 loss를 블록 단위로 적용한 자체 설계다 (CLAUDE.md 지시사항).
+</div>
+
+<h2>1. BD3-LM이 풀려는 문제와 핵심 아이디어</h2>
+<p><b>배경.</b> Autoregressive(AR) 모델은 우도가 높고 KV 캐시로 빠르지만 토큰을 하나씩 순차 생성해야 한다. Discrete diffusion(MDLM 등)은 병렬 생성이 가능하지만 우도가 낮고, 고정 길이 캔버스에 묶여 가변 길이 생성이 어렵다. BD3-LM은 이 둘을 <b>블록 단위로 보간</b>한다.</p>
+<p><b>블록 분해.</b> 시퀀스를 크기 B의 블록으로 나누고, 우도를 블록 단위 AR로 분해한 뒤 각 블록 내부만 masked discrete diffusion으로 모델링한다:</p>
+<pre>log p(x) = Σ_b log p(x^b | x^{&lt;b})          ← 블록 간: autoregressive
+p(x^b | x^{&lt;b}) : 블록 내: discrete diffusion (이전 블록들을 조건으로 하는 NELBO)</pre>
+<ul>
+<li>B = 1이면 순수 AR, B = 시퀀스 길이면 순수 diffusion — <b>block size가 AR↔diffusion 보간 파라미터</b>.</li>
+<li>생성은 semi-autoregressive: 블록 하나를 diffusion으로 완성해 커밋하고, 다음 노이즈 블록을 이어붙인다. 이 구조 덕분에 <b>가변 길이 생성</b>과 <b>블록 간 KV 캐시</b>가 가능해진다.</li>
+</ul>
+
+<h2>2. 원본 코드의 중요 부분 (파일·함수 단위)</h2>
+
+<h3>2.1 벡터화 학습 — 한 번의 forward로 모든 블록 학습</h3>
+<p><span class="mono">diffusion.py :: _forward_pass_diffusion</span>. 나이브하게 하면 블록마다 별도 forward가 필요하지만(블록 수 배 비용), BD3-LM은 노이즈 입력 x<sub>t</sub>와 클린 입력 x<sub>0</sub>를 <b>이어붙인 [x<sub>t</sub> ‖ x<sub>0</sub>] (길이 2n)</b>을 한 번에 넣고, 특수 어텐션 마스크로 정보 흐름을 제어한다. 노이즈 레벨 t는 <b>블록마다 독립적으로 샘플</b>된다 (<span class="mono">_sample_t</span>: 블록 수만큼 uniform 샘플 후 <span class="mono">repeat_interleave</span>).</p>
+
+<h3>2.2 특수 어텐션 마스크 — 3개 서브마스크의 OR</h3>
+<p><span class="mono">models/hf/modeling_bd3lm.py :: block_diff_mask</span>. 쿼리/키가 x<sub>t</sub> 반쪽인지 x<sub>0</sub> 반쪽인지(x0_flag)와 블록 인덱스로 판정:</p>
+<pre>M_BD  (block diagonal)      : 같은 반쪽 &amp; 같은 블록          → 노이즈 블록 내부 self-attention
+M_OBC (offset block causal) : x_t 쿼리 → 엄격히 이전 블록의 x_0 키  → 이전 클린 블록을 조건으로
+M_BC  (block causal)        : x_0 쿼리 → 같거나 이전 블록의 x_0 키  → 클린 표현(캐시용) 갱신
+mask = M_BD | M_OBC | M_BC</pre>
+
+<h3>2.3 Loss — MDLM식 NELBO + SUBS 파라미터화</h3>
+<p><span class="mono">diffusion.py :: _subs_parameterization, _loss</span>. 디노이저는 x̂<sub>0</sub>-예측(logits over vocab). SUBS는 (a) <b>MASK 토큰의 확률을 0으로</b> 강제 (<span class="mono">logits[:,:,mask_index] = -inf</span>), (b) <b>이미 공개된(unmasked) 위치는 자기 자신으로 carry-over</b> (해당 위치 log-prob = 0 → loss 기여 없음). log-linear 스케줄에서 NELBO는 다음의 단순한 가중 CE가 된다:</p>
+<pre>L = E_{t~U[ε,1]} [ -(1/t) · Σ_{masked ℓ} log p_θ(x_0^ℓ | x_t) ]     (t는 블록별 독립)</pre>
+
+<h3>2.4 샘플링 — semi-AR 루프 + first-hitting 샘플러</h3>
+<p><span class="mono">diffusion.py :: _semi_ar_sampler, _ddpm_caching_update</span>. 바깥 루프는 블록을 하나씩 이어붙이고, 안쪽 루프는 현재 블록을 디노이즈. first-hitting 샘플러(Zheng et al. 2025의 등가·고속 샘플러)는 "다음 토큰이 공개되는 시각"으로 바로 점프한다:</p>
+<pre>u ~ U(0,1);  t ← t · u^(1/num_masked)      ← first-hitting 시간 갱신
+p_x0 = softmax(디노이저(x));  masked 위치 중 균등하게 1개를 골라 p_x0에서 샘플해 공개</pre>
+<p>→ 마스크된 토큰 1개당 forward 1번, 블록당 정확히 B번의 공개로 종료. 그 외 nucleus(top-p) 샘플링, 블록 완성 시 KV 캐시 저장, EOS/entropy 기반 정지 조건(<span class="mono">_check_stop_conds</span>)이 붙는다.</p>
+
+<h3>2.5 분산 감소 — BD3-LM 논문의 핵심 학습 기법</h3>
+<ul>
+<li><b>Clipped noise schedule</b> (<span class="mono">config.algo.var_min=True</span>, 기본 켜짐): t를 [ε_min, ε_max] ⊂ [0,1] 구간에서만 샘플. 학습 중 검증 loss의 <b>분산</b>이 최소가 되는 구간을 주기적으로 탐색(<span class="mono">_clipped_schedule_search</span>, delta 0.05)해 갱신한다. 논문에서 gradient 분산을 크게 줄여 PPL을 개선한 주요 기법이며, <b>작은 block size일수록 효과가 큼</b>.</li>
+<li><b>Antithetic t 샘플링</b>: 배치·블록에 걸쳐 t를 층화(stratify)해 추정 분산 감소.</li>
+<li><b>EMA</b> (0.9999): 가중치 지수이동평균을 평가·생성에 사용.</li>
+</ul>
+
+<h3>2.6 백본 — DDiT (rotary + adaLN)</h3>
+<p><span class="mono">modeling_bd3lm.py :: DDiTBlock</span>. Pre-LN transformer + <b>rotary 위치 임베딩</b>, 노이즈 레벨 σ를 <span class="mono">TimestepEmbedder</span>로 임베딩해 <b>adaLN</b>(zero-init, 블록당 6개 modulation: shift/scale/gate × attn/MLP)으로 주입. 단, masked diffusion에서는 마스크 토큰 자체가 노이즈 레벨을 드러내므로 <b>시간 조건은 사실상 불필요</b>(논문 명시)하고, conditioning 벡터 c는 시퀀스당 1개로 브로드캐스트된다.</p>
+
+<div class="pagebreak"></div>
+
+<h2>3. 구성 요소별 대조표 (mask 커널 = BD3-LM 이식 대상)</h2>
+<table>
+<tr><th style="width:16%">구성 요소</th><th style="width:30%">원본 (bd3lms)</th><th style="width:30%">로컬 (bd_models.py)</th><th style="width:24%">판정</th></tr>
+<tr>
+  <td>학습 어텐션 마스크</td>
+  <td><span class="mono">block_diff_mask</span>: M_BD | M_OBC | M_BC (flex-attention mask_mod)</td>
+  <td><span class="mono">get_block_diff_mask</span> (L61): 동일 3개 서브마스크의 OR, boolean 텐서로 실체화 + 캐시</td>
+  <td class="ok">일치 — 세 서브마스크의 판정식이 문자 그대로 동일</td>
+</tr>
+<tr>
+  <td>벡터화 학습</td>
+  <td>[x<sub>t</sub> ‖ x<sub>0</sub>] concat, 블록별 t ~ U 후 repeat_interleave</td>
+  <td><span class="mono">_forward_mask</span> (L416): 동일 concat, <span class="mono">_sample_t_blocks</span> → repeat_interleave</td>
+  <td class="ok">일치</td>
+</tr>
+<tr>
+  <td>Loss (NELBO)</td>
+  <td>loss_scale = −1/t (log-linear), SUBS carry-over로 masked 위치만 기여, 유효 토큰 수로 나눔</td>
+  <td>−(1/t)·log p<sub>θ</sub>(x<sub>0</sub>)를 masked 위치에만 명시적으로 적용, loss_mask 합으로 나눔</td>
+  <td class="ok">일치 — carry-over(원본) vs 명시적 마스킹(로컬)은 동일한 값의 두 구현</td>
+</tr>
+<tr>
+  <td>SUBS 제약</td>
+  <td>logits[MASK] = −inf; unmasked는 one-hot 고정</td>
+  <td>logits[..., MASK] = −1e9; unmasked 위치는 loss·샘플링 모두에서 갱신 제외</td>
+  <td class="ok">일치 (동작 기준)</td>
+</tr>
+<tr>
+  <td>First-hitting 샘플러</td>
+  <td>t ← t·u^(1/num_masked) (u는 배치 공통 스칼라); 블록 전체를 샘플 후 균등 선택한 masked 1개만 반영</td>
+  <td><span class="mono">_denoise_block_mask</span> (L689): 동일 시간 갱신 (u는 샘플별); masked 1개를 균등 선택 후 그 위치만 p_x0에서 샘플</td>
+  <td class="ok">일치 — 커밋되는 토큰의 분포 동일. u가 샘플별인 것은 배치 내 독립성을 높일 뿐</td>
+</tr>
+<tr>
+  <td>Semi-AR 생성</td>
+  <td><span class="mono">_semi_ar_sampler</span>: 블록 append → 디노이즈 → (EOS/entropy 정지)</td>
+  <td><span class="mono">plan</span> (L570): 블록 append → 디노이즈 → dst(hit)/END(miss) 스캔 정지</td>
+  <td class="ok">구조 일치 (정지 규칙은 과제 특성상 대체, §4-A)</td>
+</tr>
+<tr>
+  <td>시간 조건</td>
+  <td>masked diffusion엔 사실상 불필요 (마스크가 자기 식별)</td>
+  <td>mask 커널 기본 off (<span class="mono">bd_time_cond</span>로 옵션), graph 커널은 강제 on</td>
+  <td class="ok">일치 (원본 논문의 논거를 그대로 따름)</td>
+</tr>
+</table>
+
+<h2>4. 로컬 구현이 달라진 부분 — 전체 목록</h2>
+
+<h3>A. 도메인 적응 (언어 모델링 → OD 경로 계획)</h3>
+<table>
+<tr><th style="width:22%">항목</th><th>내용</th></tr>
+<tr><td>Vocabulary / 상태</td><td>BPE 서브워드 → 도로 그래프 정점 id (V=1,390) + <span class="mono">END</span>(=V), <span class="mono">PAD</span>(=V+1), <span class="mono">MASK</span>(=V+2). 정점 임베딩은 node2vec으로 초기화.</td></tr>
+<tr><td>캔버스 / 길이 스펙</td><td><span class="mono">[dst, ori, v₁, …, v_L=dst, END…END | PAD…PAD]</span> — 경로 최종 토큰이 속한 블록의 나머지는 END로 채워 <b>학습 대상에 포함</b>, 이후 블록은 PAD로 <b>loss에서 제외</b> (<span class="mono">build_canvas</span>, smoke test로 경계 케이스 검증). 원본에는 없는 프로젝트 고유 설계.</td></tr>
+<tr><td>OD 조건화</td><td>2채널: (1) dst·ori를 캔버스 앞 2칸에 <b>클린 in-context 토큰</b>으로 고정, (2) <span class="mono">od_mlp([emb(ori);emb(dst)])</span>를 adaLN conditioning 벡터에 더함. 조건 dropout 0.1 + 학습된 null_cond → 무조건부 생성·CFG 지원 (기본 w=1, CFG off). 원본은 무조건부 생성만.</td></tr>
+<tr><td>정지 규칙</td><td>원본의 EOS/entropy/likelihood 정지(<span class="mono">_check_stop_conds</span>) 대신, 커밋된 블록을 스캔해 <b>dst 등장 → hit(성공 정지), END/PAD/MASK 등장 → miss</b>. 길이 모델 없음 — 길이는 생성 중 창발.</td></tr>
+<tr><td>후처리 (평가용)</td><td>miss 경로에 refine_nx(shortest-path 패치) / refine_es(<span class="mono">eval_shortest.refine()</span>) 변형을 추가 채점. 이번 실험은 <b>raw(후처리 없음)</b>만 리포트.</td></tr>
+</table>
+
+<h3>B. 구조적 차이 (동작은 유사하나 구현이 다른 것)</h3>
+<table>
+<tr><th style="width:22%">항목</th><th style="width:34%">원본</th><th>로컬</th></tr>
+<tr><td>위치 인코딩</td><td>Rotary (상대적)</td><td>학습형 절대 위치 임베딩 (<span class="mono">pos = arange(S) % n</span> — x<sub>t</sub>/x<sub>0</sub> 반쪽이 위치 공유)</td></tr>
+<tr><td>Conditioning 입도</td><td>c는 시퀀스당 1개 (σ 임베딩) → 브로드캐스트</td><td>c는 <b>토큰당</b> (블록별 t + OD 임베딩) — 블록마다 다른 노이즈 레벨과 OD 채널을 함께 주입하기 위함</td></tr>
+<tr><td>어텐션 커널</td><td>FlexAttention + torch.compile (torch 2.x)</td><td>수동 matmul + masked_fill (torch 1.12 호환; 수학적으로 동일)</td></tr>
+<tr><td>어휘 헤드</td><td>weight-tying 없음, DDitFinalLayer(adaLN)</td><td>동일 구조 (final adaLN + zero-init head)</td></tr>
+</table>
+
+<h3>C. 원본에 있으나 로컬에서 제거된 기능</h3>
+<table>
+<tr><th style="width:26%">기능</th><th style="width:44%">원본에서의 역할</th><th>영향 평가</th></tr>
+<tr><td class="warn">Clipped noise schedule (var_min 탐색)</td><td>t 샘플 구간 [ε_min, ε_max]을 검증 loss 분산 최소 기준으로 적응 탐색. 논문의 주요 기여, <b>작은 블록일수록 효과 큼</b></td><td>로컬은 t ∈ [1e-3, 1] 고정. <b>block size sweep 해석 시 유일하게 주의할 차이</b> — 작은 블록(1, 2)의 성능이 원본 대비 과소평가될 수 있음. 단 sweep 내부(블록 간) 비교는 전 구간 동일 조건이므로 공정</td></tr>
+<tr><td>EMA (0.9999)</td><td>평가·생성 시 가중치 이동평균 사용</td><td>미구현. 기존 blk4 기준선(hit 0.952)도 EMA 없이 달성 — 이번 sweep도 동일 조건이라 내부 비교 공정</td></tr>
+<tr><td>Antithetic t 샘플링</td><td>t 층화로 gradient 분산 감소</td><td>의도적 제거 (모듈 docstring에 명시). loss 추정 노이즈 소폭 증가</td></tr>
+<tr><td>KV 캐시 / nucleus 샘플링</td><td>생성 속도 / 생성 품질-다양성 트레이드오프</td><td>속도·샘플링 온도 관련 기능 — 정확도 평가에는 영향 없음 (full softmax 샘플링 = temp 1.0)</td></tr>
+<tr><td>고정 스텝 마스크 샘플러</td><td>first-hitting의 대안 (T스텝 이산화)</td><td>first-hitting만 유지 (등가·고속이므로)</td></tr>
+</table>
+
+<h3>D. 로컬에만 있는 것 — graph(uniform-state) 커널</h3>
+<p>bd3lms에는 없는 커널로, <b>이식이 아니라 결합</b>이다: BD3-LM의 블록 구조(어텐션 마스크, [x<sub>t</sub>‖x<sub>0</sub>] 학습, semi-AR 생성)는 그대로 두고, 블록 내부의 노이징·loss만 이 저장소 <span class="mono">seq_models.py</span>(Destroyer/Restorer)의 uniform-state CTMC diffusion으로 교체했다 (block-diffusion-loss.pdf, CLAUDE.md 지시).</p>
+<ul>
+<li>노이징: Q<sub>t</sub> = exp((A′−D′)β<sub>t</sub>) — 그래프 인접행렬 기반 CTMC, 상태공간은 &lt;end&gt; 상태를 추가한 V+1 (가상 &lt;end&gt; 노드 degree = <span class="mono">bd_eos_deg</span>).</li>
+<li>Loss: D3PM ELBO = KL[q(x<sub>t−1</sub>|x<sub>t</sub>,x<sub>0</sub>) ‖ p<sub>θ</sub>] + CE + connectivity 정규화 (Restorer.forward와 동일 수식, 블록·loss_mask 단위 적용).</li>
+<li>생성: 블록당 max_T(100)스텝 역과정 + MC posterior 근사, 마지막에 인접행렬 제약 디코드.</li>
+<li>시간 조건 강제 on (uniform 노이즈는 x<sub>t</sub>만으로 노이즈 레벨 식별 불가).</li>
+</ul>
+
+<h2>5. 요약</h2>
+<ul>
+<li><b>mask 커널은 BD3-LM의 수학(마스크·loss·샘플러)을 정확히 따른다</b> — 위 §3의 다섯 요소 모두 코드 수준 대조로 확인.</li>
+<li>차이는 세 종류로 정리된다: <span class="add">(A) 과제 적응</span>(OD 조건화·길이 스펙·정지 규칙 — 프로젝트 스펙에 의한 필수 변경), <span class="diff">(B·C) 학습 편의 기능 제거</span>(EMA·clipped schedule·antithetic 등 — 정확도에 2차적 영향, sweep 내부 비교에는 영향 없음), <span class="add">(D) graph 커널 추가</span>(bd3lms 외부의 자체 설계).</li>
+<li>결과 해석 시 유의점 한 가지: <b>clipped schedule 부재</b>는 작은 block size의 절대 성능을 원본 논문 대비 불리하게 만들 수 있다. block size 간 경향 비교는 유효하되, "blk1이 논문의 AR 수준"이라는 식의 절대 비교는 피할 것.</li>
+</ul>
+
+</body>
+</html>

@@ -15,5 +15,6 @@ rsync -av --delete \
   --exclude 'CLAUDE.md' \
   --exclude '*.pdf' \
   --exclude 'pdfs' \
+  --exclude 'report_src' \
   --exclude '.DS_Store' \
   ./ wp03052@143.248.84.179:/home/aailab/wp03052/Synthetic-Data/Block-Diffusion-OD-Planning

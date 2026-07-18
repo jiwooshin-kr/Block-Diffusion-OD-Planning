@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Importance-Weight Guidance in Block Diffusion — Rigorous Formulation</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 10.5px; line-height: 1.62; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  .eq { text-align: center; margin: 10px 0; font-family: "Times New Roman", serif; font-size: 12px; font-style: italic; }
+  .eq .tag { float: right; font-style: normal; font-family: "Helvetica Neue", sans-serif; font-size: 9.5px; color: #666; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5px; }
+  th, td { border: 1px solid #bbb; padding: 4px 7px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  .box { background: #f0f6ff; border: 1.5px solid #7aa7e0; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .warnbox { background: #fff8e6; border: 1.5px solid #e6c260; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .small { font-size: 8.9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  sub, sup { font-size: 75%; }
+</style>
+</head>
+<body>
+
+<h1>Importance-Weight Guidance in Block Diffusion — Rigorous Formulation</h1>
+<p class="small">2026-07-17 · Companion to <span class="mono">MASKED_GUIDANCE.pdf</span> (absorbing-kernel instantiation, Eqs. 1–5 therein) · Implementation: <span class="mono">models_seq/bd_models.py :: plan_guided / _denoise_block_mask_guided</span>, <span class="mono">models_seq/bd_disc.py</span>, <span class="mono">train_bd_disc.py</span>, <span class="mono">eval_bd_guidance.py</span></p>
+
+<p><b>Question addressed.</b> The importance-weight guidance of <span class="mono">MASKED_GUIDANCE.pdf</span> is stated for a fixed-length canvas. Block diffusion (BD3-LM style) generates <i>semi-autoregressively</i>: blocks are committed one at a time and length is emergent. Can the method be applied directly? <b>Answer: yes</b> — the block-autoregressive factorization composes exactly with the per-block guided reverse process, provided the discriminator is defined on <i>partial paths</i>. This note gives the derivation, the two lemmas that make it work (prefix-constant cancellation; the bias of a block-marginal discriminator), and the estimator actually implemented.</p>
+
+<h2>1. Setup</h2>
+<p>Vocabulary: road vertices plus END; canvas form <span class="mono">x = [dst, v₀=ori, v₁, …]</span>. The BD model factorizes block-autoregressively over blocks of size B,</p>
+<p class="eq">p<sub>θ</sub>(x | od) = ∏<sub>b</sub> p<sub>θ</sub>(x<sup>b</sup> | x<sup>&lt;b</sup>, od), <span class="tag">(1)</span></p>
+<p>each block factor realized by absorbing (masked) diffusion with SUBS x̂₀-prediction and first-hitting sampling. q denotes the target (exceptional-scenario) path distribution over the same canvases. We assume, as in the companion note, the same forward corruption for q and p<sub>θ</sub> within a block, so q(x<sup>b</sup><sub>t</sub> | x<sup>b</sup><sub>0</sub>) = p<sub>θ</sub>(x<sup>b</sup><sub>t</sub> | x<sup>b</sup><sub>0</sub>).</p>
+
+<h2>2. Block-conditional guided reverse step</h2>
+<p>Fix the committed prefix x<sup>&lt;b</sup> and the current noised block x<sup>b</sup><sub>t</sub>. The exceptional-target reverse posterior of the current block, conditioned on the prefix, expands exactly as in the fixed-canvas case but with all measures conditioned on x<sup>&lt;b</sup>:</p>
+<p class="eq">q(x<sup>b</sup><sub>t−1</sub> | x<sup>b</sup><sub>t</sub>, x<sup>&lt;b</sup>) = 𝔼<sub>x₀<sup>b</sup> ∼ p<sub>θ</sub>(x₀<sup>b</sup> | x<sup>b</sup><sub>t</sub>, x<sup>&lt;b</sup>)</sub>[ w<sub>b</sub>(x₀<sup>b</sup>) · q(x<sup>b</sup><sub>t−1</sub> | x<sup>b</sup><sub>t</sub>, x₀<sup>b</sup>) ] / 𝔼[w<sub>b</sub>], <span class="tag">(2)</span></p>
+<p class="eq">w<sub>b</sub>(x₀<sup>b</sup>) = q(x₀<sup>b</sup> | x<sup>&lt;b</sup>) / p<sub>θ</sub>(x₀<sup>b</sup> | x<sup>&lt;b</sup>). <span class="tag">(3)</span></p>
+<p>Eq. (2) is the exact conditional analogue of the companion note's Eq. (1); the forward-kernel ratio q(x<sup>b</sup><sub>t</sub>|x₀<sup>b</sup>)/p<sub>θ</sub>(x<sup>b</sup><sub>t</sub>|x₀<sup>b</sup>) = 1 cancels for the same reason (shared absorbing forward). The only new object is the <b>conditional</b> density ratio (3).</p>
+
+<h3>2.1 Lemma 1 (prefix-constant cancellation) — why a partial-path discriminator suffices</h3>
+<p>Write the conditional ratio via joint (partial-path) ratios:</p>
+<p class="eq">w<sub>b</sub>(x₀<sup>b</sup>) = [ q(x<sup>&lt;b</sup>, x₀<sup>b</sup>) / p<sub>θ</sub>(x<sup>&lt;b</sup>, x₀<sup>b</sup>) ] · [ p<sub>θ</sub>(x<sup>&lt;b</sup>) / q(x<sup>&lt;b</sup>) ] = C<sup>−1</sup> · r(x<sup>&lt;b</sup> ∥ x₀<sup>b</sup>), <span class="tag">(4)</span></p>
+<p>where r(u) = q(u)/p<sub>θ</sub>(u) is the ratio of <b>partial-path marginals</b> and C = q(x<sup>&lt;b</sup>)/p<sub>θ</sub>(x<sup>&lt;b</sup>) depends only on the (fixed) prefix — it is <b>constant across candidates</b>. The guided step (2) is self-normalized: substituting N candidates x₀<sup>b,(n)</sup> ∼ p<sub>θ</sub>(x₀ | x<sup>b</sup><sub>t</sub>, x<sup>&lt;b</sup>) (mean-field, §3),</p>
+<p class="eq">q̂(x<sup>b</sup><sub>t−1</sub> | ·) = Σ<sub>n</sub> w<sub>b</sub><sup>(n)</sup> q(x<sup>b</sup><sub>t−1</sub> | x<sup>b</sup><sub>t</sub>, x₀<sup>b,(n)</sup>) / Σ<sub>n</sub> w<sub>b</sub><sup>(n)</sup>, <span class="tag">(5)</span></p>
+<p>any candidate-independent factor of w<sub>b</sub> cancels between numerator and denominator. Hence <b>using r(x<sup>&lt;b</sup> ∥ x₀<sup>b</sup>) in place of w<sub>b</sub> leaves (5) unchanged</b>: a discriminator trained to tell exceptional from reference <i>partial paths</i>, evaluated on [committed prefix ∥ candidate completion], implements the conditional-ratio guidance exactly. By the Bayes-optimality identity, a partial-path discriminator D<sub>φ</sub> trained with positives ∼ q-partials and negatives ∼ p<sub>ref</sub>-partials satisfies D/(1−D) → q(u)/p<sub>ref</sub>(u) = r(u) (with p<sub>ref</sub> = p<sub>θ</sub>; see §4 on the negative class).</p>
+
+<div class="warnbox"><b>Finite-precision caveat.</b> C cancels algebraically, but if the prefix is already strongly typed (C very large/small) the logit sits in the saturated region of D and candidate-level differences are crushed by finite precision. This motivates the bounded-logit head and label smoothing of §5 — saturation control matters even though C is "harmless" in exact arithmetic.</div>
+
+<h3>2.2 Lemma 2 (block-marginal discriminator is biased) — why the prefix must be included</h3>
+<p>Suppose instead the discriminator saw only the B-token block, estimating the <b>marginal</b> ratio r<sub>blk</sub>(x₀<sup>b</sup>) = q<sub>blk</sub>(x₀<sup>b</sup>)/p<sub>blk</sub>(x₀<sup>b</sup>) where q<sub>blk</sub>(y) = Σ<sub>u</sub> q(u) q(y|u) marginalizes over prefixes u. Then</p>
+<p class="eq">r<sub>blk</sub>(y) / w<sub>b</sub>(y) = [ Σ<sub>u</sub> q(u | y) … ] — a function of y, <b>not</b> a constant, <span class="tag">(6)</span></p>
+<p>because the prefix posterior q(u | y) depends on the candidate y. The discrepancy does not cancel in (5); the resulting guidance targets a different (prefix-averaged) distribution. Intuitively: whether a 4-token fragment is "rerouting around a removed edge" is undecidable without the route that led into it. <b>The discriminator input must be the full partial path.</b></p>
+
+<h2>3. First-hitting instantiation (what is implemented)</h2>
+<p>Within the current block, the guided reveal follows the companion note's Eqs. (3)–(5) with the conditional weight of §2. At each first-hitting step (one forward pass, one token revealed):</p>
+<ul>
+<li><b>Proposals.</b> N = 100 candidates x₀<sup>b,(n)</sup> are drawn from the mean-field product of the SUBS marginals, x̂₀ = ∏<sub>ℓ∈masked</sub> p<sub>θ</sub>(x₀<sup>ℓ</sup> | x<sup>b</sup><sub>t</sub>, x<sup>&lt;b</sup>); revealed positions are copied through (frozen). An optional proposal temperature τ (companion §6 remedy) flattens the candidate distribution: x₀ ∼ softmax(logits/τ).</li>
+<li><b>Weights.</b> Each candidate is truncated at its first END (exclusive) / dst (inclusive) — partial paths never contain special tokens — padded with the dedicated PAD, and scored: w<sup>(n)</sup> = exp(γ · logit<sub>φ</sub>([x<sup>&lt;b</sup> ∥ x₀<sup>b,(n)</sup>])), where exp(logit) = D/(1−D) and γ ≤ 1 is an optional tempering exponent. Row-max subtraction before exponentiation (shift-invariance of (5)) gives numerical stability.</li>
+<li><b>Reveal target.</b> x̄₀<sup>ℓ</sup>[k] ∝ Σ<sub>n</sub> w<sup>(n)</sup> 𝟙{x₀<sup>(n),ℓ</sup> = k}; one uniformly-chosen masked position ℓ* is revealed by sampling from x̄₀<sup>ℓ*</sup> (absorbing posterior, companion Eq. 5). Zero-mass fallback: x̂₀.</li>
+<li><b>Diagnostics.</b> Per-step effective sample size ESS = (Σ<sub>n</sub>w<sup>(n)</sup>)²/Σ<sub>n</sub>(w<sup>(n)</sup>)² is logged. ESS ≈ N ⇔ flat weights ⇔ guidance inert (either clone candidates — the proposal-entropy bottleneck of companion §6, observed ESS ≈ 9.93/10 in the smoke run — or an uninformative discriminator). ESS ≈ 1 ⇔ weight collapse (variance).</li>
+</ul>
+
+<h3>3.1 Sequential composition and its bias</h3>
+<p>Across blocks the procedure is <b>sequential self-normalized importance sampling without resampling</b>: block b's guided kernel treats the guided prefix as exact. Two approximations stack per block: (i) the self-normalization bias of (5), O(1/N) for bounded weights (bounded by e<sup>2λγ</sup> under the λ-bounded logit head); (ii) the mean-field proposal p̂ replacing the true block posterior — identical in kind to the companion note's per-step approximation, not BD-specific. No further BD-specific approximation is introduced; in the B → canvas-length limit the scheme reduces to the fixed-canvas method, and at B = 1 to discriminator-reweighted autoregressive decoding.</p>
+
+<h2>4. The discriminator: training distribution = deployment distribution</h2>
+<table>
+<tr><th style="width:24%">Ingredient</th><th>Specification and rationale</th></tr>
+<tr><td>Input</td><td>Canvas-form partial path [dst, v₀, …, v<sub>j</sub>] + scenario adjacency A<sub>scn</sub>. Matches the guidance-time input exactly (Lemma 1).</td></tr>
+<tr><td>Positives</td><td>Random-truncation partials of exceptional paths: j resampled every batch (multiple cuts per path across training — no truncation point is discarded; K cuts per path per epoch is equivalent in the limit). Data budget: 1% / 3% of except-0 (exp. 1) or of each of except-1…99 (exp. 2).</td></tr>
+<tr><td>Negatives (denominator p<sub>ref</sub>)</td><td><b>data</b>: normal-data partials (assumes p<sub>θ</sub> = q<sub>normal</sub>). <b>mix</b>: 50% normal partials + 50% model samples — open-ended generations and one-shot mean-field block completions from the normal-trained BD model (<span class="mono">gen_bd_neg_pool.py</span>), i.e. the same distribution the candidates are drawn from at deployment. Rationale: the ratio's denominator is defined by the negative class; scoring mean-field candidates with a discriminator that has never seen off-manifold sequences yields arbitrary logits (the observed weight-variance pathology).</td></tr>
+<tr><td>Adjacency channel</td><td>Per-transition features [A<sub>scn</sub>(v<sub>i−1</sub>, v<sub>i</sub>), is-transition, deg<sub>scn</sub>(v<sub>i</sub>)/deg<sub>norm</sub>(v<sub>i</sub>)] injected at every position, plus GraphSAGE-updated vertex embeddings under A<sub>scn</sub>. The removed-edge signal is a direct table lookup — this is what should generalize to unseen scenarios (exp. 2), where each batch carries its own exception's adjacency.</td></tr>
+<tr><td>Padding</td><td>Dedicated PAD token (= n_vertex, embedding-frozen) + masked mean pooling: the logit of a path is invariant to batch composition (fixes the vertex-0-padding pollution and the pooling dilution of the prior <span class="mono">Discriminator</span>).</td></tr>
+</table>
+
+<h2>5. Stabilizing the importance weights</h2>
+<ul>
+<li><b>Bounded logit head</b> z ↦ λ·tanh(z/λ) (λ = 4): |logit| ≤ λ structurally caps the weight ratio at e<sup>2λ</sup>; the differentiable version of the clip-at-3 experiment in the prior project's logs.</li>
+<li><b>Label smoothing</b> ε = 0.05 in the BCE: keeps D off {0,1}, bounding the Bayes-target odds and preventing saturation (see the caveat of §2.1).</li>
+<li><b>Negative-class coverage</b> (the 'mix' ablation): addresses the out-of-support pathology at its source.</li>
+<li><b>Weight tempering</b> w ↦ w<sup>γ</sup>, γ ≤ 1: continuous variance–bias knob (γ = 0 recovers unguided sampling).</li>
+<li><b>Self-normalization + row-max shift</b>: exact shift-invariance used for numerics; Lemma 1 guarantees the shift is harmless.</li>
+<li><b>ESS logging</b> at every reveal: separates "guidance inert" (ESS ≈ N) from "guidance unstable" (ESS ≈ 1) — the two failure modes have opposite remedies (raise proposal entropy vs. temper weights).</li>
+</ul>
+
+<h2>6. Adjacency-masked proposals — Lemma 3 (exactness under the ideal discriminator)</h2>
+<p><b>Motivation (measured).</b> The first experimental round found ESS ≈ 94–99 out of N = 100 at every block size: mean-field candidates are near-clones, so reweighting has nothing to choose between (the companion note's §6 bottleneck). Raising the proposal temperature adds <i>isotropic</i> entropy — mass spreads over all 1,390 vertices, almost none of it on legal reroutes — and degrades arrival faster than it helps (measured: τ = 2 costs −4 to −17%p arrival for −2 to −6%p removed-edge usage, ESS still ≈ 97). The fix is <i>directed</i> diversity: constrain the proposal to scenario-legal transitions.</p>
+
+<h3>6.1 The masked proposal</h3>
+<p>At a reveal step let M be the masked positions of the current block, and for each ℓ ∈ M let p<sub>ℓ</sub>(·) be the model's SUBS marginal (shared by all candidates — they condition on the same x<sub>t</sub> and prefix). Define the legality mask from the <b>revealed</b> neighbours only:</p>
+<p class="eq">m<sub>ℓ</sub>(k) = A<sub>scn</sub>[left(ℓ), k]<sup>𝟙{left revealed, real vertex}</sup> · A<sub>scn</sub>[k, right(ℓ)]<sup>𝟙{right revealed, real vertex}</sup>, &nbsp; m<sub>ℓ</sub>(END) = m<sub>ℓ</sub>(PAD) = 1, <span class="tag">(8)</span></p>
+<p>and the masked mean-field proposal g(y) = ∏<sub>ℓ∈M</sub> p<sub>ℓ</sub>(y<sub>ℓ</sub>) m<sub>ℓ</sub>(y<sub>ℓ</sub>) / Z<sub>ℓ</sub>, with Z<sub>ℓ</sub> = Σ<sub>k</sub> p<sub>ℓ</sub>(k) m<sub>ℓ</sub>(k) (fallback to unmasked p<sub>ℓ</sub> if Z<sub>ℓ</sub> ≈ 0). Because m depends only on revealed tokens — never on candidate-internal values — Z<sub>ℓ</sub> is <b>identical across candidates</b>.</p>
+
+<h3>6.2 Lemma 3</h3>
+<p><b>Claim.</b> Let w(y) = q(y | x<sup>&lt;b</sup>)/p<sub>θ</sub>(y | x<sup>&lt;b</sup>) be the exact conditional weight of Eq. (3) and f any statistic (e.g. the reveal indicator). If the target q assigns zero probability to paths using removed edges — true by construction, exceptional data are paths on the exceptional graph — then</p>
+<p class="eq">𝔼<sub>y∼p̂</sub>[w(y) f(y)] = 𝔼<sub>y∼g</sub>[w(y) f(y)] · ∏<sub>ℓ</sub>Z<sub>ℓ</sub>, <span class="tag">(9)</span></p>
+<p>so the <b>self-normalized</b> estimator over g-candidates with <b>unchanged</b> weights w (no p̂/g correction) targets exactly the same guided reveal distribution as the p̂-proposal estimator.</p>
+<p><b>Proof.</b> Exact importance identity with proposal change: 𝔼<sub>p̂</sub>[w f] = 𝔼<sub>g</sub>[(p̂/g) w f] + 𝔼<sub>p̂</sub>[w f 𝟙{y ∉ supp g}]. On supp g, p̂(y)/g(y) = ∏<sub>ℓ</sub> Z<sub>ℓ</sub>/m<sub>ℓ</sub>(y<sub>ℓ</sub>) = ∏<sub>ℓ</sub> Z<sub>ℓ</sub> (all m = 1 there), a candidate-independent constant. Off supp g, some position uses a transition absent from A<sub>scn</sub> against a <i>revealed</i> neighbour; any completion y is then a path using a removed (or never-existing) edge, hence q(y | x<sup>&lt;b</sup>) = 0 and w(y) = 0 — the excluded term vanishes <i>identically</i>, not approximately. Substituting into the self-normalized ratio, ∏Z<sub>ℓ</sub> cancels between numerator and denominator (as C did in Lemma 1). ∎</p>
+<div class="box"><b>Reading.</b> Under the ideal discriminator, adjacency masking discards only candidates whose weight is exactly zero: it is a <b>Rao-Blackwellization</b> of the same estimator — all N samples land in the region where the target lives, which is precisely a variance reduction, never a bias. With a <i>learned</i> D the difference between the two estimators is bounded by the (spurious) weight mass D/(1−D) that the discriminator assigns to illegal candidates — the masked estimator simply deletes discriminator error on the illegal region.</div>
+
+<h3>6.3 Scope and caveats</h3>
+<ul>
+<li><b>Revealed-neighbour masking only.</b> If masking instead chained through candidate-internal values (sequential within-candidate sampling), Z would depend on the candidate and the p̂/g correction would no longer be constant — the cancellation is specific to the position-independent mask (8). Consequence: two <i>adjacent masked</i> positions can still be mutually illegal inside one candidate; the D-weights (and the next reveal's updated mask) handle the residue.</li>
+<li><b>Legality of special tokens.</b> END/PAD are always legal (ending is not a traversal); MASK is already excluded by SUBS. The dst prefix (position 0) is not a traversal and imposes no constraint.</li>
+<li><b>Unguided control.</b> Masking without the discriminator (uniform weights over g-candidates ⇔ revealing directly from the masked marginal) isolates how much improvement comes from the constraint itself vs. from reweighting among legal reroutes — included in the experiment grid as <span class="mono">adj-only</span>.</li>
+<li><b>Zero-support fallback.</b> If no token is legal under (8) (Z<sub>ℓ</sub> ≈ 0, e.g. a dead-end vertex in A<sub>scn</sub>), the position falls back to the unmasked marginal; such reveals are the analogue of P1's unfixable pairs (0 observed so far).</li>
+</ul>
+
+<h2>7. Experimental design</h2>
+<table>
+<tr><th>Axis</th><th>Values</th></tr>
+<tr><td>Backbone (normal-trained, reused)</td><td>mask kernel, blk ∈ {4, 8, 16, 32, 64} (main axis, fam 0.05 / 1% / exp. 1); pivots blk {4, 16} for the other axes</td></tr>
+<tr><td>Scenario family</td><td>v4-0.05 (200 edges removed), v4-0.1 (both share the v3 normal graph — verified identical; excepts are edge-subsets)</td></tr>
+<tr><td>Data budget</td><td>1%, 3% (except-0 rows for evaluation are reserved before the training split; seed 777)</td></tr>
+<tr><td>Experiments</td><td>1: disc on except-0 → eval except-0. 2: disc on except-1…99 (1% each, per-batch scenario + adjacency) → eval except-0 (unseen-scenario generalization)</td></tr>
+<tr><td>Disc negatives</td><td>data / mix (ablation)</td></tr>
+<tr><td>Proposal temperature</td><td>τ ∈ {1, 1.5, 2} (τ &gt; 1 on blk {4, 16}, main disc — companion §6 remedy; measured: hurts more than it helps)</td></tr><tr><td><b>Adjacency-masked proposals (§6)</b></td><td>blk {4, 8, 16, 32, 64} × {adj-only (no disc), adj+guided (mix disc)} on fam 0.05 / 1% / exp. 1; blk {4, 16} × adj+guided for fam 0.1 and for the exp. 2 disc</td></tr>
+<tr><td>Estimator</td><td>N = 100 importance samples, γ = 1, guidance at every reveal (no t-window: first-hitting reveals are irreversible, so any unguided reveal locks in its error — the old t &lt; 10 heuristic does not transfer)</td></tr>
+<tr><td>Evaluation</td><td>1,000 reserved except-0 OD pairs; arrival / validity vs. A<sub>except0</sub> / EM / PC / removed-edge usage (path-, per-path-, edge-rate) / len corr / ESS; raw (no post-processing)</td></tr>
+</table>
+<p class="small">Runs: 1 negative pool + 8 discriminator trainings + 7 unguided baselines + 26 guided evaluations (22 main/pivot + 4 temperature), orchestrated by <span class="mono">run_bd_guidance_all.sh</span> in tmux over 4 GPUs.</p>
+
+</body>
+</html>
