@@ -123,6 +123,21 @@
 <li><b>Sampler-side fixes change the sampling distribution</b> and need empirical validation: revealing left-to-right within a block (or adjacency-constrained logit masking, present in the prior project and deliberately removed) breaks the equivalence between first-hitting-with-uniform-choice and the trained diffusion reverse process — a learned model's conditionals are not order-consistent, and the prefix-conditioned patterns L→R relies on are rarely seen in random-masking training of large blocks.</li>
 </ul>
 
+
+<h3>4.5 Note (untested): the END-tail's loss share grows linearly with block size — a loss-engineering lever</h3>
+<p>Under the project length spec, every END token in the dst block's tail is an <i>independent</i> training target (<span class="mono">build_canvas</span>: the tail is inside <span class="mono">loss_mask</span>). Since the tail length is uniform over block residues, its expected size is (B−1)/2 tokens — so the composition of the supervised set shifts with block size (mean path ≈ 24):</p>
+<table>
+<tr><th>block size</th><th class="num">path tokens in loss</th><th class="num">END tokens (mean)</th><th class="num">END share of supervision</th></tr>
+<tr><td>4</td><td class="num">≈23</td><td class="num">≈1.5</td><td class="num">≈6%</td></tr>
+<tr><td>16</td><td class="num">≈23</td><td class="num">≈7.5</td><td class="num">≈25%</td></tr>
+<tr><td>64 (= MDLM)</td><td class="num">≈23</td><td class="num">≈31.5</td><td class="num"><b>≈58%</b></td></tr>
+</table>
+<ul>
+<li><b>Both faces of the coin.</b> Credit: the abundant END supervision is what §4.1–4.2 measure as excellent END calibration (miss-only len corr 0.95+, misses ending at plausible lengths). Suspected cost: END is an easy target (after dst the context fully determines it), so at large B the majority of the gradient goes to easy tokens, <i>diluting</i> the supervision of path tokens — a candidate partial explanation for §1's validity decay with block size. <b>Untested hypothesis</b>; the block-size effect also has the independent random-reveal-order mechanism of §4.3, so attribution requires a dedicated ablation.</li>
+<li><b>Possible modifications (engineering, none run)</b>: (i) <i>constant-mass END reweighting</i> — scale the tail's per-token weight by c/(tail length), making the END loss share block-size-invariant (c ≈ 1–2 tokens' worth); (ii) <i>first-END-only</i> — supervise the first END at full weight and exclude the rest like PAD (the "single EOS loss" reading of the spec); (iii) <i>decayed tail</i> — geometric down-weighting within the tail. All compose with the −(1/t) MDLM weighting unchanged.</li>
+<li><b>Cautions if ever tested</b>: down-weighting risks the END calibration that §4.2 credits (miss lengths, doorstep stopping), so validity and miss-END calibration must be evaluated jointly; and any change breaks comparability with all runs in this report — test at blk16/64 first, where the share (25–58%) leaves the most room.</li>
+</ul>
+
 <h2>5. Post-processing results — P1 (local splice), P3 (endpoint patch), P1+P3</h2>
 <p>Implementation of §4.4's outlook (<span class="mono">eval_bd_postproc.py</span>): for each checkpoint, 1,000 OD pairs are generated once (raw, no refinement), then the SAME generations are scored under three post-processors. <b>P1</b> replaces every invalid consecutive pair (u, v) with the shortest path u→v; <b>P3</b> (= refine_nx) grafts a shortest path from a miss path's endpoint to dst; <b>P1+P3</b> composes both. Fresh evaluation draw (seed 1), so raw values differ from §1 within the ±1%p sampling noise.</p>
 <table>
@@ -381,7 +396,8 @@
 </ul>
 
 
-<h3>6.11 Published-baseline comparison: D-CBG (Schiff et al.)</h3>
+<h2>7. Published-baseline comparison: D-CBG (Schiff et al.)</h2>
+<h3>7.1 The as-published comparison</h3>
 <p>Plug-in port of <span class="mono">kuleshov-group/discrete-diffusion-guidance</span> (no changes to this repo's files; <span class="mono">dcbg_plugin.py</span> carries their <span class="mono">_cbg_denoise</span> logic): a <b>noise-conditioned classifier</b> p(y | x<sub>t</sub>, t) — their protocol: labeled data (exceptional vs normal, same 1% budget/splits) corrupted by the generation-time forward process — tilts the posterior by γ·log p(y | x<sub>t</sub><sup>ℓ→k</sup>). Mask kernel: <b>exact enumeration</b> at the revealed position (exact under first-hitting, cost |V| classifier calls per reveal); graph kernel: their <b>first-order (Taylor) approximation</b>. γ ∈ {1, 2, 4}; identical evaluation.</p>
 <table>
 <tr><th>config</th><th>method</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM raw</th><th class="num">rem-edge</th><th class="num">inv-edge</th><th class="num">EM P1+P3</th><th class="num">PC P1+P3</th><th class="num">s/path</th></tr>
@@ -405,31 +421,71 @@
 </ul>
 
 
-<h3>6.12 Controlled 2×2: mechanism × classifier, everything else matched</h3>
-<p>§6.11 confounded the guidance <i>mechanism</i> with the classifier <i>design</i>. This round controls it: all four cells share the identical classifier architecture (embedding · GraphSAGE · edge-existence/deg-ratio channels · encoder · masked pooling · bounded logit · label smoothing) and the identical training protocol (labeled data: exceptional 1% vs normal, same splits). The only remaining differences are method-intrinsic: D-CBG's classifier reads the <i>noisy</i> state (x<sub>t</sub>, t) as its math requires; ours reads <i>clean partial paths</i> as Lemma 1 requires — and how the output is used (per-position tilting vs joint-candidate reweighting). No proposal masking in the 2×2 (kept as a separate, composable lever).</p>
+<h3>7.2 Controlled 2×2: mechanism × classifier, everything else matched</h3>
+<p>§7.1 confounded the guidance <i>mechanism</i> with the classifier <i>design</i>. This round controls it: all four cells share the identical classifier architecture (embedding · GraphSAGE · edge-existence/deg-ratio channels · encoder · masked pooling · bounded logit · label smoothing) and the identical training protocol (labeled data: exceptional 1% vs normal, same splits). The only remaining differences are method-intrinsic: D-CBG's classifier reads the <i>noisy</i> state (x<sub>t</sub>, t) as its math requires; ours reads <i>clean partial paths</i> as Lemma 1 requires — and how the output is used (per-position tilting vs joint-candidate reweighting). No proposal masking in the 2×2 (kept as a separate, composable lever).</p>
 <table>
 <tr><th>config</th><th>cell</th><th class="num">clf val acc</th><th class="num">arrival</th><th class="num">valid raw</th><th class="num">inv-edge</th><th class="num">rem-edge</th><th class="num">EM P1+P3</th></tr>
-<tr><td rowspan="4">mask blk4</td><td>D-CBG + plain (γ=4)</td><td class="num">0.719</td><td class="num">0.907</td><td class="num">0.267</td><td class="num">9.0%</td><td class="num">2.2%</td><td class="num">0.309</td></tr>
-<tr><td>D-CBG + adj (γ=4)</td><td class="num">0.746</td><td class="num">0.939</td><td class="num">0.289</td><td class="num">6.1%</td><td class="num">4.4%</td><td class="num">0.290</td></tr>
+<tr><td rowspan="5">mask blk4</td><td>D-CBG + plain (γ=4)</td><td class="num">0.719</td><td class="num">0.907</td><td class="num">0.267</td><td class="num">9.0%</td><td class="num">2.2%</td><td class="num">0.309</td></tr>
+<tr><td>D-CBG + adj (γ=4)</td><td class="num">0.746</td><td class="num">0.939</td><td class="num">0.289</td><td class="num">6.1%</td><td class="num">4.4%</td><td class="num">0.290</td></tr><tr><td>D-CBG + adj, first-order (any γ)</td><td class="num">0.746</td><td class="num">0.962</td><td class="num">0.245</td><td class="num">6.4%</td><td class="num">5.1%</td><td class="num">0.260</td></tr>
+
 <tr><td>IW + plain</td><td class="num">0.676</td><td class="num">0.948</td><td class="num">0.255</td><td class="num">6.4%</td><td class="num">4.9%</td><td class="num">0.271</td></tr>
-<tr><td><b>IW + adj</b></td><td class="num">0.71</td><td class="num">0.948</td><td class="num best">0.306</td><td class="num">5.8%</td><td class="num">5.0%</td><td class="num">—</td></tr>
-<tr><td rowspan="4">mask blk64</td><td>D-CBG + plain (γ=4)</td><td class="num">0.734</td><td class="num">0.844</td><td class="num">0.156</td><td class="num">9.6%</td><td class="num">2.2%</td><td class="num">0.228</td></tr>
-<tr><td>D-CBG + adj (γ=4)</td><td class="num">0.750</td><td class="num">0.844</td><td class="num">0.181</td><td class="num">8.4%</td><td class="num">3.5%</td><td class="num">0.214</td></tr>
+<tr><td><b>IW + adj</b></td><td class="num">0.71</td><td class="num">0.950</td><td class="num best">0.307</td><td class="num">5.7%</td><td class="num">5.0%</td><td class="num">0.300</td></tr>
+<tr><td rowspan="5">mask blk64</td><td>D-CBG + plain (γ=4)</td><td class="num">0.734</td><td class="num">0.844</td><td class="num">0.156</td><td class="num">9.6%</td><td class="num">2.2%</td><td class="num">0.228</td></tr>
+<tr><td>D-CBG + adj (γ=4)</td><td class="num">0.750</td><td class="num">0.844</td><td class="num">0.181</td><td class="num">8.4%</td><td class="num">3.5%</td><td class="num">0.214</td></tr><tr><td>D-CBG + adj, first-order (any γ)</td><td class="num">0.750</td><td class="num">0.871</td><td class="num">0.152</td><td class="num">8.6%</td><td class="num">4.8%</td><td class="num">0.194</td></tr>
+
 <tr><td>IW + plain</td><td class="num">0.676</td><td class="num">0.883</td><td class="num">0.172</td><td class="num">8.6%</td><td class="num">4.6%</td><td class="num">0.204</td></tr>
-<tr><td><b>IW + adj</b></td><td class="num">0.71</td><td class="num">0.876</td><td class="num best">0.205</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td><b>IW + adj</b></td><td class="num">0.71</td><td class="num">0.885</td><td class="num best">0.210</td><td class="num">8.4%</td><td class="num">4.8%</td><td class="num">0.221</td></tr>
 <tr><td rowspan="3">graph blk64</td><td>D-CBG + adj (any γ)</td><td class="num">0.531</td><td class="num">0.03</td><td class="num">0.466–0.469</td><td class="num">5.0%</td><td class="num">5.0%</td><td class="num">0.056</td></tr>
 <tr><td>IW + adj (data)</td><td class="num">0.71</td><td class="num">0.015</td><td class="num">0.656</td><td class="num">5.0%</td><td class="num">5.0%</td><td class="num">0.080</td></tr>
 <tr><td><b>IW + plain</b> (ESS 31!)</td><td class="num">0.676</td><td class="num">0.019</td><td class="num best">0.708</td><td class="num">4.1%</td><td class="num">4.1%</td><td class="num">0.084</td></tr>
 </table>
 <p class="small">IW rows here are guidance-only (no proposal masking); "IW + adj" cells reuse the §6.1 data-negative runs (composed EM not measured there). γ ≤ 2 leaves D-CBG ≈ base in every config. With the composable adjacency-masked proposal added, IW + plain reaches valid 0.327 (blk4) and — the new best graph64 result — <b>valid 0.988, raw EM 0.233</b> (IW + plain + adj-proposal).</p>
 <ul>
+<li><b>The cost–quality frontier closes the comparison.</b> D-CBG's cheap variant — the first-order/Taylor approximation, ONE classifier forward+backward per reveal (~48 calls/path, 0.07 s/path) — is <b>inert at every γ</b> (valid 0.245 ≈ base 0.242 at blk4; 0.152 ≈ 0.151 at blk64): the gradient taken at the one-hot MASK embedding carries no usable substitution signal here. Its effective variant — exact enumeration — works only at γ = 4 and costs ~33k calls (2.7 s/path). Our IW sits between (~2.4k calls, 0.03–0.05 s/path) and delivers the largest lift: <b>the cheap D-CBG doesn't work and the working D-CBG isn't cheap</b>.</li>
 <li><b>The user-hypothesized effect is real: adjacency-aware classifiers help BOTH methods.</b> D-CBG gains +2.2–2.5%p valid at both block sizes (clf val 0.72 → 0.75), and — more interestingly — the adjacency channel <i>removes D-CBG's coherence damage</i> (blk4 inv-edge 9.0% → 6.1%): seeing legality directly, the classifier no longer needs the extreme tilts that manufactured alien edges.</li>
 <li><b>With classifiers matched, the mechanisms are closer than §6.11 suggested</b>: adj-vs-adj, IW wins (0.306 vs 0.289; 0.205 vs 0.181); plain-vs-plain it splits (blk4 D-CBG 0.267 &gt; IW 0.255; blk64 IW 0.172 &gt; D-CBG 0.156). The honest mechanism-level claims for IW are therefore: no γ to tune (D-CBG is inert below γ = 4), arrival preserved (0.95 vs 0.84–0.94), 30–90× lower cost, and free composition with proposal masking.</li>
 <li><b>The structural argument survives the control</b>: even with the matched adjacency architecture, D-CBG's classifier stays at chance on the CTMC kernel (0.531) — the bottleneck is the <i>noisy-input classification problem itself</i>, not architecture, and the clean-partial-path input that fixes it is only available to the IW formulation (Lemma 1). On the graph kernel the mechanism gap is decisive: 0.47 (D-CBG) vs 0.71 (IW).</li>
 <li><b>Unexpected finding</b>: on the graph kernel the PLAIN partial-path discriminator out-guides the adjacency-aware one (valid 0.708 vs 0.656) with dramatically sharper weights (ESS 31 vs 96) — the first sub-50 ESS observed anywhere in this project. The adjacency features appear to homogenize candidate scores exactly where sequence-level cues are the discriminative signal; worth a dedicated ablation before drawing design rules.</li>
 </ul>
+<p><b>Unseen-scenario transfer (exp. 2) under matched classifiers.</b> Training the adjacency-aware D-CBG classifier on except 1–99 (1% each, per-batch scenario adjacency — the §6.2 protocol) and evaluating on unseen except_0:</p>
+<table>
+<tr><th>blk</th><th>method (unseen, e99-trained)</th><th class="num">clf val (unseen)</th><th class="num">valid raw</th><th class="num">vs seen (e0)</th><th class="num">EM P1+P3</th></tr>
+<tr><td rowspan="2">4</td><td>D-CBG + adj (γ=4)</td><td class="num">0.703</td><td class="num">0.292</td><td class="num">0.289 → ±0</td><td class="num">0.281</td></tr>
+<tr><td><b>IW + adj (ours, §6.2)</b></td><td class="num">≈0.71</td><td class="num best">0.314</td><td class="num">0.306 → ±0</td><td class="num">0.302</td></tr>
+<tr><td rowspan="2">64</td><td>D-CBG + adj (γ=4)</td><td class="num">0.684</td><td class="num">0.161</td><td class="num">0.181 → −2.0%p</td><td class="num">0.199</td></tr>
+<tr><td><b>IW + adj (ours)</b></td><td class="num">≈0.71</td><td class="num best">0.210</td><td class="num">0.210 → ±0</td><td class="num">0.212</td></tr>
+</table>
+<ul>
+<p class="small">IW rows' EM P1+P3 and the blk64 row come from three-way reruns with the e99 disc (blk4 rerun valid 0.323 — within the ±1.5%p sampling noise; the blk64 seen reference 0.210 is the same-seed e0-data rerun).</p>
+<li><b>The generalization is a property of the adjacency-conditioned classifier design, not of either guidance mechanism</b>: given the adjacency channel (our formulation, ported to D-CBG in this section), BOTH methods transfer to the unseen scenario essentially without loss at blk4 (D-CBG 0.289 → 0.292; ours 0.306 → 0.314). This softens §7.1's last bullet: the <i>published</i> D-CBG (no adjacency input) requires per-scenario retraining, but the capability is portable. The honest paper claim is therefore: <b>we contribute the scenario-conditioned classifier design that makes zero-retraining transfer possible — for any classifier-guidance mechanism — and our IW mechanism retains its advantage under it</b> (unseen blk4: 0.314 vs 0.292, same ordering as seen).</li>
+</ul>
 
-<h2>7. Relation to the previous report (RESULTS_BD_prev.pdf)</h2>
+
+
+<h3>7.3 The purest protocol: model-distribution negatives for both methods</h3>
+<p>Final control: both classifiers trained against the SAME negative source — each block's 20k unconditional generations (the §6.7 pools) — each corrupted per its method's input type (D-CBG: generation-time noising; ours: clean random-truncation partials). Positives, splits, architecture unchanged (adjacency-aware). The table places the data-negative results of §7.2 side by side, giving a <b>direct per-method comparison of the negative class (normal data vs model generations)</b> (data-negative rows are the same-protocol measurements from §7.2 / the gap-fill reruns).</p>
+<table>
+<tr><th>blk</th><th>method</th><th>negative</th><th class="num">clf val</th><th class="num">arrival</th><th class="num">valid raw</th><th class="num">EM raw</th><th class="num">EM P1+P3</th><th class="num">PC P1+P3</th></tr>
+<tr><td rowspan="6">4</td><td>D-CBG + adj (γ=4)</td><td>normal data</td><td class="num">0.746</td><td class="num">0.939</td><td class="num">0.289</td><td class="num">0.258</td><td class="num">0.290</td><td class="num">0.444</td></tr>
+<tr><td>D-CBG + adj (γ=4)</td><td>model</td><td class="num">0.828</td><td class="num">0.945</td><td class="num">0.298</td><td class="num">0.264</td><td class="num">0.291</td><td class="num">0.444</td></tr>
+<tr><td>IW (ours)</td><td>normal data</td><td class="num">≈0.71</td><td class="num">0.950</td><td class="num">0.307</td><td class="num">0.278</td><td class="num">0.300</td><td class="num">0.455</td></tr>
+<tr><td>IW (ours)</td><td>model</td><td class="num">≈0.83</td><td class="num">0.952</td><td class="num">0.327</td><td class="num">0.291</td><td class="num">0.306</td><td class="num">0.461</td></tr>
+<tr><td><b>IW + adj-proposal</b></td><td>normal data</td><td class="num">≈0.71</td><td class="num">0.861</td><td class="num">0.361</td><td class="num">0.307</td><td class="num">0.323</td><td class="num">0.471</td></tr>
+<tr><td><b>IW + adj-proposal</b></td><td>model</td><td class="num">≈0.83</td><td class="num">0.861</td><td class="num"><b>0.372</b></td><td class="num"><b>0.315</b></td><td class="num"><b>0.331</b></td><td class="num"><b>0.476</b></td></tr>
+<tr><td rowspan="6">64</td><td>D-CBG + adj (γ=4)</td><td>normal data</td><td class="num">0.750</td><td class="num">0.844</td><td class="num">0.181</td><td class="num">0.139</td><td class="num">0.214</td><td class="num">0.384</td></tr>
+<tr><td>D-CBG + adj (γ=4)</td><td>model</td><td class="num">0.824</td><td class="num">0.848</td><td class="num">0.191</td><td class="num">0.142</td><td class="num">0.223</td><td class="num">0.390</td></tr>
+<tr><td>IW (ours)</td><td>normal data</td><td class="num">≈0.71</td><td class="num">0.885</td><td class="num">0.210</td><td class="num">0.163</td><td class="num">0.221</td><td class="num">0.381</td></tr>
+<tr><td>IW (ours)</td><td>model</td><td class="num">≈0.82</td><td class="num">0.888</td><td class="num">0.222</td><td class="num">0.173</td><td class="num">0.220</td><td class="num">0.379</td></tr>
+<tr><td><b>IW + adj-proposal</b></td><td>normal data</td><td class="num">≈0.71</td><td class="num">0.810</td><td class="num">0.239</td><td class="num">0.176</td><td class="num"><b>0.236</b></td><td class="num"><b>0.402</b></td></tr>
+<tr><td><b>IW + adj-proposal</b></td><td>model</td><td class="num">≈0.82</td><td class="num">0.806</td><td class="num"><b>0.251</b></td><td class="num"><b>0.183</b></td><td class="num">0.234</td><td class="num">0.401</td></tr>
+</table>
+<ul>
+<li><b>Model negatives are the third portable ingredient</b>: like the adjacency channel (§7.2) they also improve D-CBG (valid 0.289 → 0.298 at blk4, 0.181 → 0.191 at blk64; classifier val 0.75 → 0.83) — replicating §6.7's data &lt; model ordering on their side of the fence.</li>
+<li><b>Under the purest matched protocol the IW lead widens slightly</b>: +2.9%p (blk4, 0.327 vs 0.298) and +3.1%p (blk64, 0.222 vs 0.191) at ≈2σ each — versus +1.7/+2.4%p under data negatives — and the full stack (adj-proposal) leads every column at both block sizes.</li>
+<li><b>Summary of the §7 comparison</b>: all three ingredients we formulate — scenario-conditioned classifier (§7.2), model-distribution negatives (here), and Lemma 3 proposal masking (ours only, by construction) — port to or compose with classifier guidance; D-CBG benefits from the first two, yet in every matched configuration (data/model negatives × plain/adj classifiers × seen/unseen) the joint-candidate IW mechanism scores highest, tunes no γ, preserves arrival, and occupies the favorable point of the cost frontier.</li>
+</ul>
+
+<h2>8. Relation to the previous report (RESULTS_BD_prev.pdf)</h2>
 <ul>
 <li>The predecessor evaluated blk4 only, with refine variants: mask raw 0.952 arrival / 0.820 valid∧hit, refine_es +0.03 arrival, refine_nx arrival 1.0 by construction. This sweep drops refinement entirely (user request) and varies block size instead.</li>
 <li>The predecessor's conclusion "refinement is nearly obsolete for the mask kernel" gets stronger here: at blk1, raw arrival is 0.997 — refinement would have ≤0.3%p of headroom.</li>

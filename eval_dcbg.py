@@ -27,6 +27,8 @@ if __name__ == "__main__":
     ap.add_argument("-gamma", type=float, required=True)
     ap.add_argument("-clf", type=str, required=True)
     ap.add_argument("-adj", type=int, default=0, help="1 = adjacency-aware classifier")
+    ap.add_argument("-approx", type=int, default=0, help="1 = first-order (Taylor) D-CBG")
+    ap.add_argument("-res_suffix", type=str, default="")
     ap.add_argument("-ckpt", type=str, default="")
     ap.add_argument("-family", type=str, default="0.05")
     ap.add_argument("-eval_num", type=int, default=1000)
@@ -63,7 +65,7 @@ if __name__ == "__main__":
     t0 = time.time()
     for s in range(0, len(real), args.batch):
         bb = real[s:s + args.batch]
-        planned += plan_fn(model, [p[0] for p in bb], [p[-1] for p in bb], clf, args.gamma)
+        planned += plan_fn(model, [p[0] for p in bb], [p[-1] for p in bb], clf, args.gamma, use_approx=bool(args.approx))
         print(f"  {len(planned)}/{len(real)} ({time.time()-t0:.0f}s)", flush=True)
 
     def splice(p):
@@ -89,7 +91,7 @@ if __name__ == "__main__":
         except Exception:
             return list(p), 0
 
-    tag0 = f"DCBG_{args.kernel}{args.blk}_g{args.gamma}" + ("_adj" if args.adj else "")
+    tag0 = f"DCBG_{args.kernel}{args.blk}_g{args.gamma}" + ("_adj" if args.adj else "") + ("_fo" if args.approx else "") + args.res_suffix
 
     def score(tag, paths, patch):
         summ, _, _ = evaluate_em_pc(gen_paths=paths, A=A_exc.float(), shortest_paths=sp_exc,

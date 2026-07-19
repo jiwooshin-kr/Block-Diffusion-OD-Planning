@@ -159,7 +159,7 @@ from models_seq.bd_models import get_block_causal_mask
 
 
 @torch.no_grad()
-def plan_dcbg_mask(model, origs, dests, clf, gamma, micro_bs=4096, **kw):
+def plan_dcbg_mask(model, origs, dests, clf, gamma, micro_bs=4096, use_approx=False, **kw):
     """Mask kernel + exact D-CBG at the revealed position: the reveal target
     softmax(log p_theta + gamma * log p_phi(y | x_t^{l->k})) over the vocab
     (their _cbg_denoise absorbing branch, restricted -- exactly -- to the one
@@ -204,18 +204,31 @@ def plan_dcbg_mask(model, origs, dests, clf, gamma, micro_bs=4096, **kw):
                 idx = torch.multinomial(sel, 1).squeeze(1)        # reveal position
                 pos = s - block + idx
 
-                # ---- their exact enumeration, at the reveal position ----
                 V = model.backbone.vocab_size
-                xt_jumps = seq.unsqueeze(1).repeat(1, V, 1)        # (b, V, s)
-                xt_jumps[arange[:, None], torch.arange(V, device=seq.device)[None, :].expand(b, V),
-                         pos[:, None].expand(b, V)] = torch.arange(V, device=seq.device)[None, :].expand(b, V)
-                flat = xt_jumps.view(b * V, s)
-                t_rep = (t * 100.0).repeat_interleave(V)
-                clf_lp = torch.empty(b * V, device=model.device)
-                for lo in range(0, b * V, micro_bs):
-                    hi = min(lo + micro_bs, b * V)
-                    clf_lp[lo:hi] = clf.get_log_probs(flat[lo:hi], t_rep[lo:hi])[:, 1]
-                clf_lp = clf_lp.view(b, V)
+                if use_approx:
+                    # ---- their first-order (Taylor) approximation:
+                    # ONE classifier forward+backward per reveal step ----
+                    xt_one_hot = F.one_hot(seq, clf.vocab).to(torch.float)
+                    with torch.enable_grad():
+                        xt_one_hot.requires_grad_(True)
+                        lp_xt = clf.get_log_probs(xt_one_hot, t * 100.0)
+                        lp_xt[..., 1].sum().backward()
+                        grad = xt_one_hot.grad
+                    ratio = (grad - (xt_one_hot * grad).sum(dim=-1, keepdim=True)).detach()
+                    full_lp = ratio + lp_xt[..., 1].detach()[:, None, None]   # (b, s, vocab)
+                    clf_lp = full_lp[arange, pos][:, :V]
+                else:
+                    # ---- their exact enumeration, at the reveal position ----
+                    xt_jumps = seq.unsqueeze(1).repeat(1, V, 1)        # (b, V, s)
+                    xt_jumps[arange[:, None], torch.arange(V, device=seq.device)[None, :].expand(b, V),
+                             pos[:, None].expand(b, V)] = torch.arange(V, device=seq.device)[None, :].expand(b, V)
+                    flat = xt_jumps.view(b * V, s)
+                    t_rep = (t * 100.0).repeat_interleave(V)
+                    clf_lp = torch.empty(b * V, device=model.device)
+                    for lo in range(0, b * V, micro_bs):
+                        hi = min(lo + micro_bs, b * V)
+                        clf_lp[lo:hi] = clf.get_log_probs(flat[lo:hi], t_rep[lo:hi])[:, 1]
+                    clf_lp = clf_lp.view(b, V)
 
                 guided = log_p[arange, idx] + gamma * clf_lp       # (b, V)
                 guided[:, model.MASK] = -1e9
