@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>BD 아키텍처 — 코드 기반 정보 흐름 도해</title>
+<style>
+  @page { size: A4; margin: 15mm 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; font-size: 10.5px; line-height: 1.6; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 22px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.7px; line-height: 1.5; background: #f7f7f7; border: 1px solid #ddd; border-left: 3px solid #4a7fc1; border-radius: 4px; padding: 7px 10px; white-space: pre-wrap; margin: 6px 0; }
+  .small { font-size: 8.9px; color: #555; }
+  .keybox { background: #f0f6ff; border: 1.5px solid #7aa7e0; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  /* diagram primitives */
+  .fig { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin: 10px 0; background: #fcfcfc; }
+  .figcap { font-size: 9.3px; color: #444; margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 6px; }
+  .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .tok { display: inline-block; min-width: 34px; text-align: center; padding: 4px 4px; border-radius: 4px; border: 1.5px solid #999; font-family: Menlo, monospace; font-size: 9px; }
+  .clean { background: #d9f0d9; border-color: #2f7d2f; }
+  .noised { background: #dbe7fb; border-color: #3563a8; }
+  .maskt { background: #f6dcdc; border-color: #b03a3a; }
+  .padt { background: #eee; border-color: #aaa; color: #888; }
+  .pin { background: #fff2cc; border-color: #c9a227; }
+  .arrowline { text-align: center; font-size: 14px; color: #555; margin: 2px 0; }
+  /* attention grid */
+  table.att { border-collapse: collapse; margin: 6px 0; }
+  table.att td, table.att th { width: 34px; height: 26px; text-align: center; border: 1px solid #bbb; font-family: Menlo, monospace; font-size: 8.5px; padding: 0; }
+  table.att th { background: #f0f0f0; }
+  .bd  { background: #dbe7fb; }   /* block diagonal */
+  .obc { background: #ffe3c2; }   /* offset block causal */
+  .bc  { background: #d9f0d9; }   /* block causal */
+  .no  { background: #f5f5f5; color: #ccc; }
+  .leg { display: inline-block; width: 12px; height: 12px; border: 1px solid #999; vertical-align: -2px; margin-right: 3px; }
+  .stack { border: 1.5px solid #888; border-radius: 6px; padding: 6px 10px; margin: 4px auto; text-align: center; background: #fff; max-width: 460px; font-size: 9.6px; }
+  .stack.hl { border-color: #3563a8; background: #eef4fd; }
+  .side { color: #b25000; font-size: 9px; }
+</style>
+</head>
+<body>
+
+<h1>BD 아키텍처 — 코드가 정의하는 정보 흐름 (특히: 이전 블록 → 현재 블록)</h1>
+<p class="small">기준 코드: <span class="mono">models_seq/bd_models.py</span> (라인 번호는 현재 저장소 기준) · mask 커널 중심 · 동반 문서: BD_CODE_VERIFICATION, RESULTS_BD</p>
+
+<div class="keybox">
+<b>핵심 답부터.</b> 이전 블록의 정보가 현재 블록의 디노이징에 들어가는 경로는 <b>self-attention 단 하나</b>다.
+(1) <b>샘플링 시</b>: 캔버스가 [커밋된 블록들 ‖ 현재 MASK 블록]으로 자라고, block-causal 마스크 하에서 현재 블록의 모든 토큰이 <b>커밋된 토큰들을 매 레이어에서 직접 attend</b>한다 — 커밋 토큰은 값이 동결(frozen)되지만 KV 캐시가 없어 <b>매 forward마다 재인코딩</b>된다.
+(2) <b>학습 시</b>: [x<sub>t</sub> ‖ x<sub>0</sub>] 이어붙인 입력에서, 노이즈 블록의 쿼리가 <b>이전 블록들의 클린 x<sub>0</sub> 키/밸류</b>를 attend한다 (offset-block-causal, 일종의 teacher forcing — 샘플링 시 "커밋 = 클린"과 정확히 대응).
+adaLN conditioning 경로(시간 t + OD 임베딩)는 이전 블록의 <b>내용</b>은 나르지 않는다.
+</div>
+
+<h2>1. 학습 시 정보 흐름 — [x<sub>t</sub> ‖ x<sub>0</sub>]와 3중 어텐션 마스크</h2>
+
+<div class="fig">
+<b>입력 캔버스</b> (블록 3개 예시, <span class="mono">_forward_mask</span> bd_models.py:416)
+<div class="row" style="margin-top:6px">
+  <span class="small" style="width:64px">x<sub>t</sub> (노이즈):</span>
+  <span class="tok noised">B1<br>t₁</span><span class="tok noised">B2<br>t₂</span><span class="tok maskt">B3<br>t₃</span>
+  <span style="width:14px"></span>
+  <span class="small" style="width:64px">x<sub>0</sub> (클린):</span>
+  <span class="tok clean">B1′<br>t=0</span><span class="tok clean">B2′<br>t=0</span><span class="tok clean">B3′<br>t=0</span>
+</div>
+<p class="small" style="margin-top:4px">블록마다 독립적인 t (<span class="mono">_sample_t_blocks</span> → <span class="mono">repeat_interleave</span>, :426-427). 두 절반은 <b>위치 임베딩을 공유</b>한다: <span class="mono">pos = arange(S) % n</span> (BDTransformer.forward, :264) — x<sub>0</sub> 절반이 "같은 자리의 클린 버전"으로 인식되는 이유.</p>
+
+<b>어텐션 마스크</b> (<span class="mono">get_block_diff_mask</span>, :61-84) — 행 = 쿼리, 열 = 키:
+<table class="att">
+<tr><th></th><th>B1</th><th>B2</th><th>B3</th><th>B1′</th><th>B2′</th><th>B3′</th></tr>
+<tr><th>B1</th><td class="bd">BD</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="no">·</td></tr>
+<tr><th>B2</th><td class="no">·</td><td class="bd">BD</td><td class="no">·</td><td class="obc">OBC</td><td class="no">·</td><td class="no">·</td></tr>
+<tr><th>B3</th><td class="no">·</td><td class="no">·</td><td class="bd">BD</td><td class="obc">OBC</td><td class="obc">OBC</td><td class="no">·</td></tr>
+<tr><th>B1′</th><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="bd">BD·BC</td><td class="no">·</td><td class="no">·</td></tr>
+<tr><th>B2′</th><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="bc">BC</td><td class="bd">BD·BC</td><td class="no">·</td></tr>
+<tr><th>B3′</th><td class="no">·</td><td class="no">·</td><td class="no">·</td><td class="bc">BC</td><td class="bc">BC</td><td class="bd">BD·BC</td></tr>
+</table>
+<p class="small">
+<span class="leg bd"></span><b>M_BD</b> (block_diagonal): 같은 절반·같은 블록 내부 self-attention — 블록 내부 일관성 담당 &nbsp;
+<span class="leg obc"></span><b>M_OBC</b> (offset_block_causal): 노이즈 블록 쿼리 → <b>엄격히 이전</b> 블록의 <b>클린 x₀</b> 키 — <b>"이전 블록 정보"의 학습 시 통로</b> &nbsp;
+<span class="leg bc"></span><b>M_BC</b> (block_causal): 클린 절반끼리의 블록-인과 attention — 뒤 블록이 참조할 클린 표현을 만들어 둠
+</p>
+<pre>bd_models.py:78-81
+block_diagonal      = (bq == bkv) &amp; (x0_q == x0_kv)
+offset_block_causal = (bq &gt;  bkv) &amp; x0_kv &amp; ~x0_q   # ← 이전 블록 정보의 통로
+block_causal        = (bq &gt;= bkv) &amp; x0_kv &amp; x0_q
+mask = block_diagonal | offset_block_causal | block_causal</pre>
+<div class="figcap"><b>그림 1.</b> 학습 마스크. B3(노이즈)의 행을 보면: 자기 블록(BD)과 <b>이전 블록들의 클린 버전(OBC)</b>만 보인다 — 이전 블록의 노이즈 버전(B1, B2)은 절대 보지 않는다. 이는 샘플링 시 "이전 블록 = 이미 커밋된 클린 토큰"과 정확히 일치하는 조건화다 (teacher forcing). 마지막에 <span class="mono">logits[:, :n]</span>만 취해 노이즈 절반의 예측만 loss에 쓴다 (:447).</div>
+</div>
+
+<h2>2. 샘플링 시 정보 흐름 — 블록 j를 디노이징할 때</h2>
+
+<div class="fig">
+<b>캔버스 성장과 고정 프리픽스</b> (<span class="mono">plan</span>, :616-624)
+<div class="row" style="margin-top:6px">
+  <span class="tok pin">dst</span><span class="tok pin">ori</span><span class="tok clean">v₁</span><span class="tok clean">v₂</span>
+  <span class="tok clean">v₃</span><span class="tok clean">v₄</span><span class="tok clean">v₅</span><span class="tok clean">v₆</span>
+  <span class="tok maskt">M</span><span class="tok maskt">M</span><span class="tok maskt">M</span><span class="tok maskt">M</span>
+</div>
+<p class="small">블록(B=4) 두 개가 커밋된 상태에서 세 번째 블록이 <span class="mono">_init_block</span>(:672, 전부 MASK)으로 append된 직후. 노란색 = 클린 prefix 핀 (dst, ori — 매 블록 append마다 재고정).</p>
+
+<b>디노이징 루프에서의 attention</b> (<span class="mono">_denoise_block_mask</span>, :689-718)
+<table class="att">
+<tr><th></th><th>B1</th><th>B2</th><th>B3(cur)</th></tr>
+<tr><th>B1</th><td class="bc">✓</td><td class="no">·</td><td class="no">·</td></tr>
+<tr><th>B2</th><td class="bc">✓</td><td class="bc">✓</td><td class="no">·</td></tr>
+<tr><th>B3(cur)</th><td class="bc">✓</td><td class="bc">✓</td><td class="bd">✓</td></tr>
+</table>
+<pre>bd_models.py:87-96 (get_block_causal_mask)
+blk = arange(s) // block_size
+mask = blk[:, None] &gt;= blk[None, :]        # 자기 블록 + 모든 이전 블록
+
+bd_models.py:705 (매 reveal마다 전체 시퀀스 forward)
+logits = self._cfg_logits(seq, self._t_input(b, s, t*100.0), origs, dests, attn, w)
+#        └ seq = [커밋 블록들 ‖ 현재 블록]: 커밋 토큰이 키/밸류로 직접 참여
+bd_models.py:677-686 (_t_input): 커밋 블록 t=0, 현재 블록만 t   (mask 커널은 time_cond=False라 t 자체도 미사용)</pre>
+<ul class="small">
+<li><b>이전 블록 반영 방식</b>: 6개 레이어 전부에서 현재 블록의 쿼리가 커밋 토큰의 키/밸류를 attend — 별도의 "요약 벡터"나 조건 채널 없이 <b>토큰 수준 전면 참조</b>.</li>
+<li><b>동결이지만 캐시는 아님</b>: 커밋 토큰의 값은 다시 샘플되지 않지만(revealed ⇒ frozen), KV 캐시가 없어 매 reveal forward마다 재인코딩된다 (bd3lms의 KV 캐시는 torch 1.12 호환을 위해 제거 — 모듈 docstring). 따라서 커밋 토큰의 <i>표현</i>은 현재 블록의 마스킹 상태에 따라 미세하게 달라질 수 있으나, block-causal 마스크상 커밋 토큰의 쿼리는 현재 블록을 보지 못하므로 커밋 표현은 사실상 결정적이다.</li>
+<li><b>first-hitting</b>: 한 forward당 masked 위치 1개만 공개 (:711-718) — 공개된 토큰은 다음 forward부터 "이전 정보"의 일부가 되어 같은 블록 내 남은 위치들의 문맥이 된다 (블록 내부도 순차 조건화).</li>
+</ul>
+<div class="figcap"><b>그림 2.</b> 샘플링 마스크(블록 단위 표시). 학습의 OBC(노이즈→클린)가 샘플링에서는 "현재 블록→커밋 블록" 참조로 실현된다 — 학습·샘플링의 조건화 분포가 일치하는 것이 §1 마스크 설계의 목적.</div>
+</div>
+
+<h2>3. 백본 스택 — 토큰이 지나가는 길</h2>
+
+<div class="fig">
+<div class="stack">tokens (b, S) — 학습: S=2n / 샘플링: S=s<br><span class="small">x_embedding: node2vec 초기화, V+3 (BDTransformer.__init__, :182-195)</span></div>
+<div class="arrowline">↓ <span class="side">in_proj(100→256) + pos_emb[arange(S) % n] &nbsp;(:266)</span></div>
+<div class="stack hl">BDBlock × 6 &nbsp;(:106-154) — 블록당:<br>
+<span class="small">
+① adaLN(c) → 6 modulation (shift/scale/gate × attn/MLP, zero-init :131-133)<br>
+② x += gate·Attn( modulate(LN(x)) , <b>attn_mask</b> ) — 수동 matmul attention, masked_fill(~mask, −1e9) (:142-143)<br>
+③ x += gate·MLP( modulate(LN(x)) )
+</span></div>
+<div class="arrowline">↓ <span class="side">final LN + adaLN(shift,scale) → zero-init head (:273-274)</span></div>
+<div class="stack">logits (b, S, V+3) → 학습: <span class="mono">[:, :n]</span>만 loss / 샘플링: <span class="mono">[:, -block:]</span>만 사용</div>
+<div style="margin-top:8px" class="small"><b>conditioning 벡터 c (토큰별, :267-268)</b> = time_mlp(t_tok) + od_mlp([emb(ori); emb(dst)]) — adaLN을 통해서만 주입.
+<b>즉 c가 나르는 것은 (블록별 노이즈 레벨, OD 조건)뿐이고, 이전 블록의 내용은 c에 없다</b> — 내용은 전부 attention의 키/밸류로 흐른다. 조건 dropout 시 null_cond로 대체 (:246-248).</div>
+<div class="figcap"><b>그림 3.</b> BDTransformer. bd3lms의 DDiT와 구조 동일 계열이나 (a) rotary 대신 학습형 절대 위치(두 절반 공유), (b) c가 시퀀스당 1개가 아니라 <b>토큰당</b>(블록별 t 지원 + OD 채널), (c) FlexAttention 대신 수동 matmul (torch 1.12).</div>
+</div>
+
+<h2>4. 주목해서 볼 코드 지점 요약</h2>
+<table style="border-collapse:collapse;width:100%;font-size:9.4px">
+<tr><th style="border:1px solid #bbb;padding:4px;background:#eee">위치 (bd_models.py)</th><th style="border:1px solid #bbb;padding:4px;background:#eee">무엇을 결정하나</th></tr>
+<tr><td style="border:1px solid #bbb;padding:4px"><span class="mono">:78-81 get_block_diff_mask</span></td><td style="border:1px solid #bbb;padding:4px"><b>이전 블록 정보의 학습 시 통로</b> — 특히 <span class="mono">offset_block_causal</span> 한 줄. 이 줄이 없으면 블록들이 서로 독립인 모델이 된다</td></tr>
+<tr><td style="border:1px solid #bbb;padding:4px"><span class="mono">:87-96 get_block_causal_mask</span></td><td style="border:1px solid #bbb;padding:4px">샘플링 시 현재 블록 → 커밋 블록 참조</td></tr>
+<tr><td style="border:1px solid #bbb;padding:4px"><span class="mono">:264 pos = arange(S) % n</span></td><td style="border:1px solid #bbb;padding:4px">x<sub>t</sub>/x<sub>0</sub> 절반의 위치 공유 — OBC가 "같은 자리의 클린 과거"를 가리키게 만드는 장치</td></tr>
+<tr><td style="border:1px solid #bbb;padding:4px"><span class="mono">:440-447 _forward_mask</span></td><td style="border:1px solid #bbb;padding:4px">[x<sub>t</sub>‖x<sub>0</sub>] concat 한 번의 forward로 전 블록 학습(벡터화); <span class="mono">logits[:, :n]</span></td></tr>
+<tr><td style="border:1px solid #bbb;padding:4px"><span class="mono">:616-624 plan 루프</span></td><td style="border:1px solid #bbb;padding:4px">블록 append + dst/ori 핀 재고정 — 캔버스가 자라며 커밋 정보 축적</td></tr>
+<tr><td style="border:1px solid #bbb;padding:4px"><span class="mono">:705 _denoise_block_mask</span></td><td style="border:1px solid #bbb;padding:4px">매 reveal마다 <b>전체 시퀀스</b> forward — 커밋 토큰 재인코딩 (KV 캐시 없음)</td></tr>
+<tr><td style="border:1px solid #bbb;padding:4px"><span class="mono">:677-686 _t_input</span></td><td style="border:1px solid #bbb;padding:4px">커밋 블록 t=0 / 현재 블록만 t — "클린 vs 진행 중" 구분 (mask 커널은 MASK 토큰 자체가 이를 자기 식별)</td></tr>
+<tr><td style="border:1px solid #bbb;padding:4px"><span class="mono">:149-153 BDBlock.forward</span></td><td style="border:1px solid #bbb;padding:4px">adaLN 6-modulation — 조건(t, OD)의 유일한 주입점; 이전 블록 내용은 여기로 흐르지 않음</td></tr>
+</table>
+
+<p class="small" style="margin-top:10px">보조 관찰: blk64(=MDLM 극한, 전 경로가 한 블록)에서는 OBC가 공집합이 되어 x₀ 절반의 연산이 기능적으로 낭비가 되고(§6.9의 각주), blk1(=AR 극한)에서는 모든 정보가 "커밋 블록 참조"로만 흘러 사실상 causal LM이 된다 — block size가 이 두 통로(블록 내 BD vs 블록 간 OBC/BC)의 비율을 보간한다.</p>
+
+</body>
+</html>
