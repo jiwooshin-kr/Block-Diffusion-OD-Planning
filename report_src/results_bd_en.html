@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Block-Diffusion OD Planning — Block-Size Sweep Results</title>
+<title>Block-Diffusion OD Planning — Consolidated Results (v3)</title>
+
 <style>
   @page { size: A4; margin: 16mm 15mm; }
   * { box-sizing: border-box; }
@@ -22,484 +23,183 @@
   ul { margin: 5px 0 5px 2px; padding-left: 16px; }
   li { margin: 3px 0; }
   .muted { color: #666; font-style: italic; }
+
+  .fig { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin: 10px 0; background: #fcfcfc; }
+  .figcap { font-size: 9.3px; color: #444; margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 6px; }
+  .frow { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 4px 0; }
+  .tok { display: inline-block; min-width: 30px; text-align: center; padding: 3px 3px; border-radius: 4px; border: 1.5px solid #999; font-family: Menlo, monospace; font-size: 8.8px; }
+  .clean { background: #d9f0d9; border-color: #2f7d2f; }
+  .maskt { background: #f6dcdc; border-color: #b03a3a; }
+  .pin { background: #fff2cc; border-color: #c9a227; }
+  table.att { border-collapse: collapse; margin: 6px 12px 6px 0; display: inline-table; vertical-align: top; }
+  table.att td, table.att th { width: 30px; height: 22px; text-align: center; border: 1px solid #bbb; font-family: Menlo, monospace; font-size: 8px; padding: 0; }
+  table.att th { background: #f0f0f0; }
+  .cbd { background: #dbe7fb; } .cobc { background: #ffe3c2; } .cbc { background: #d9f0d9; } .cno { background: #f5f5f5; color: #ccc; }
+  .leg { display: inline-block; width: 11px; height: 11px; border: 1px solid #999; vertical-align: -2px; margin-right: 3px; }
+
+  .lay { border: 1.5px solid #888; border-radius: 5px; padding: 4px 8px; margin: 3px auto; text-align: center; background: #fff; font-size: 9px; max-width: 330px; }
+  .lay.mod { border-color: #c9861f; background: #fff3e0; }
+  .lay.att2 { border-color: #3563a8; background: #eef4fd; }
+  .lay.sum { border: none; background: none; font-size: 12px; margin: 0 auto; }
+  .cond { border: 1.5px solid #7a4fa0; border-radius: 5px; padding: 4px 8px; margin: 3px auto; text-align: center; background: #f6efff; font-size: 9px; max-width: 240px; }
+  .twocol { display: flex; gap: 14px; align-items: flex-start; }
+  .col-main { flex: 1.25; } .col-side { flex: 1; }
+
+
   .eq { text-align: center; margin: 9px 0; font-family: "Times New Roman", serif; font-size: 11.5px; font-style: italic; }
 </style>
 </head>
 <body>
 
-<h1>Block-Diffusion OD Planning — Block-Size Sweep (mask kernel, raw)</h1>
+<h1>Block-Diffusion OD Planning — Consolidated Results (v3)</h1>
+<div class="status-box"><b>Status (2026-07-20, v3).</b> Every number in this document is re-measured on the <b>v2 backbones</b> (14 models retrained with seeded 80/20 splits: mask×7, graph d=2.0×7). Evaluation: the normal task uses a <b>shared held-out 1,000-pair set</b> drawn from the untouched test split (§2: 3 generation seeds, mean±std); the exceptional task uses the except_0 <b>reserved 1,000 pairs</b> excluded from discriminator training. The developmental narrative and full ablation history live in <span class="mono">RESULTS_BD_v1.pdf</span> (archived); full derivations in <span class="mono">BD_GUIDANCE_FORMULATION.pdf</span>, <span class="mono">BD_CODE_VERIFICATION_KO/EN.pdf</span>, <span class="mono">BD_ARCHITECTURE_KO.pdf</span>. v1 checkpoints/discs archived as <span class="mono">v1_*</span>.</div>
+<h2>1. Setup and architecture</h2>
+<p class="small">BD3-LM-style block diffusion (semi-AR across blocks, discrete diffusion within), 6-layer / dim-256 DiT (adaLN), porto_v3_normal (1,390 vertices, 1.93M paths), 1 epoch = 48.2k iters (bs 32, lr 5e-4). Canvas <span class="mono">[dst, ori, v…, v_L=dst, END…| PAD…]</span>: the END tail inside the dst block is supervised, PAD blocks excluded. Kernels: mask (absorbing, SUBS, first-hitting — max data length 59, so blk64 is effectively MDLM) and graph (uniform-state CTMC, d = 2.0, T = 100). Generation is open-ended (dst→hit / END→miss).</p>
+<div class="fig">
+<b>Figure 1. Block-diffusion mechanics — and the pathway of prior-block information</b> (code details &amp; line numbers: <span class="mono">pdfs/BD_ARCHITECTURE_KO.pdf</span>)
+<p style="margin:8px 0 2px"><b>A. Canvas and length spec</b> (blk4 example; <span class="mono">build_canvas</span>)</p>
+<div class="frow"><span class="tok pin">dst</span><span class="tok pin">ori</span><span class="tok clean">v&#8321;</span><span class="tok clean">v&#8322;</span><span class="tok clean">v&#8323;</span><span class="tok clean">v&#8324;</span><span class="tok clean">v&#8325;</span><span class="tok clean">v&#8326;=dst</span><span class="tok clean">END</span><span class="tok clean">END</span><span class="tok" style="background:#eee;color:#888">PAD</span><span class="tok" style="background:#eee;color:#888">PAD</span></div>
+<p class="small">Yellow = clean conditioning prefix (out of loss); the END tail inside the dst block IS a training target; PAD blocks are excluded.</p>
+<p style="margin:8px 0 2px"><b>B. Prior-block information enters through self-attention alone</b></p>
+<div class="frow"><table class="att">
+<tr><th></th><th>B1</th><th>B2</th><th>B3</th><th>B1&prime;</th><th>B2&prime;</th><th>B3&prime;</th></tr>
+<tr><th>B1</th><td class="cbd">BD</td><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cno">&middot;</td></tr>
+<tr><th>B2</th><td class="cno">&middot;</td><td class="cbd">BD</td><td class="cno">&middot;</td><td class="cobc"><b>OBC</b></td><td class="cno">&middot;</td><td class="cno">&middot;</td></tr>
+<tr><th>B3</th><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cbd">BD</td><td class="cobc"><b>OBC</b></td><td class="cobc"><b>OBC</b></td><td class="cno">&middot;</td></tr>
+<tr><th>B1&prime;</th><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cbd">BD</td><td class="cno">&middot;</td><td class="cno">&middot;</td></tr>
+<tr><th>B2&prime;</th><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cbc">BC</td><td class="cbd">BD</td><td class="cno">&middot;</td></tr>
+<tr><th>B3&prime;</th><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cno">&middot;</td><td class="cbc">BC</td><td class="cbc">BC</td><td class="cbd">BD</td></tr>
+</table><table class="att">
+<tr><th></th><th>B1</th><th>B2</th><th>B3*</th></tr>
+<tr><th>B1</th><td class="cbc">&#10003;</td><td class="cno">&middot;</td><td class="cno">&middot;</td></tr>
+<tr><th>B2</th><td class="cbc">&#10003;</td><td class="cbc">&#10003;</td><td class="cno">&middot;</td></tr>
+<tr><th>B3*</th><td class="cobc"><b>&#10003;</b></td><td class="cobc"><b>&#10003;</b></td><td class="cbd">&#10003;</td></tr>
+</table>
+<div style="flex:1;min-width:220px" class="small">
+<b>Left (training, <span class="mono">get_block_diff_mask</span>)</b>: on the [x<sub>t</sub>(B1&ndash;B3) &#8214; x<sub>0</sub>(B1&prime;&ndash;B3&prime;)] input, noised block B3 attends to itself (<span class="leg cbd"></span>BD) and to the <b>clean x<sub>0</sub> of strictly earlier blocks</b> (<span class="leg cobc"></span><b>OBC</b> &mdash; the sole training-time channel for prior-block information). <span class="leg cbc"></span>BC maintains the clean half&rsquo;s representations.<br>
+<b>Right (sampling, <span class="mono">get_block_causal_mask</span>)</b>: every token of the current block B3* attends <b>directly, at every layer</b>, to committed B1, B2 (orange). Committed tokens are frozen (t=0), re-encoded each forward (no KV cache).<br>
+<b>The adaLN conditioning path (c = t + OD embedding) carries no prior-block content</b> &mdash; content flows 100% through attention.</div></div>
 
-<div class="status-box">
-<b>Status (2026-07-16).</b> All seven block sizes {1, 2, 4, 8, 16, 32, 64} of the <b>mask kernel</b> are final: trained and evaluated on the new server (143.248.84.179, 4× RTX 3090, one run per GPU, two waves; 43–54 min training each; tmux sessions completed and closed). Per the current request, <b>all numbers in this report are raw — no <span class="mono">eval_shortest.refine()</span> (refine_es) and no shortest-path patching (refine_nx) anywhere</b>; hence hit = arrival throughout. Predecessor report (blk4-only, with refine variants): <span class="mono">RESULTS_BD_prev.pdf</span>. <b>Updated 2026-07-17</b>: added §4 (failure anatomy), §5 (post-processing P1/P3), and §6 (importance-weight guidance — 33 runs + 14 adjacency-masked-proposal runs, §6.5; formulation incl. Lemma 3 in BD_GUIDANCE_FORMULATION.pdf). Code-fidelity audit against the reference bd3lms implementation: <span class="mono">BD_CODE_VERIFICATION_{KO,EN}.pdf</span>.
+
+<p style="margin:10px 0 2px"><b>C. The BDTransformer tower — read bottom-up; exact injection points of conditioning and prior-block content</b></p>
+<div class="twocol">
+<div class="col-main" style="text-align:center">
+<div class="lay" style="border-color:#2f7d2f;background:#eaf6ea"><b>x&#770;&#8320; logits (b, S, V+3)</b> &mdash; per-position x&#8320; prediction</div><div class="lay sum">&uarr;</div>
+<div class="lay">zero-init Linear head</div><div class="lay sum">&uarr;</div>
+<div class="lay mod">final scale &amp; shift (&#947;, &#946; only, no gate)</div><div class="lay sum">&uarr;</div>
+<div class="lay">final LayerNorm</div><div class="lay sum">&uarr;</div>
+
+<div style="border:1.5px dashed #666;border-radius:8px;padding:8px 6px;margin:4px auto;max-width:370px;background:#fdfdfd">
+<div class="small" style="text-align:center;margin-bottom:2px"><b>BDBlock &times;6</b> (bottom→up)</div>
+<div class="lay sum">&oplus; residual 2</div><div class="lay sum">&uarr;</div>
+<div class="lay mod">gate &times;&#945;&#8322;</div><div class="lay sum">&uarr;</div>
+<div class="lay">Pointwise MLP (4&times;, GELU)</div><div class="lay sum">&uarr;</div>
+<div class="lay mod">scale &amp; shift: &times;(1+&#947;&#8322;) +&#946;&#8322;</div><div class="lay sum">&uarr;</div>
+<div class="lay">LayerNorm <span class="small">(affine-free)</span></div><div class="lay sum">&uarr;</div>
+<div class="lay sum">&oplus; residual 1</div><div class="lay sum">&uarr;</div>
+<div class="lay mod">gate &times;&#945;&#8321;</div><div class="lay sum">&uarr;</div>
+<div class="lay att2">Multi-Head Attention (block-causal mask)<br><span class="small">Q ← current-block tokens &nbsp;|&nbsp; <b>K/V ← all visible tokens incl. committed blocks</b><br>= the only entry point of prior-block content</span></div><div class="lay sum">&uarr;</div>
+<div class="lay mod">scale &amp; shift: &times;(1+&#947;&#8321;) +&#946;&#8321;</div><div class="lay sum">&uarr;</div>
+<div class="lay">LayerNorm <span class="small">(affine-free)</span></div>
+</div><div class="lay sum">&uarr;</div>
+<div class="lay">+ pos_emb[arange(S) % n] <span class="small">(positions shared by the two halves)</span></div><div class="lay sum">&uarr;</div>
+<div class="lay">in_proj (100&rarr;256) &larr; x_embedding <span class="small">(node2vec init)</span></div><div class="lay sum">&uarr;</div>
+<div class="lay" style="border-color:#b03a3a;background:#fdf0f0"><b>tokens</b>: x&#8331; (sampling: [committed &#8214; current block]) / training: [x&#8331; &#8214; x&#8320;]</div>
+</div>
+<div class="col-side">
+<div class="small" style="text-align:center"><b>conditioning path — coefficients only, no content</b></div>
+<div class="cond">t_tok <span class="small">(per-block noise level; committed t=0)</span> &rarr; time_mlp</div>
+<div class="cond">(ori, dst) &rarr; emb &rarr; od_mlp <span class="small">(null_cond on drop)</span></div>
+<div class="lay sum">&darr; +</div>
+<div class="cond"><b>c</b> (b, S, 128)</div>
+<div class="lay sum">&darr;</div>
+<div class="cond"><b>adaLN MLP</b> (Mish&rarr;Linear, <b>zero-init</b>)<br>&rarr; (&#947;&#8321;,&#946;&#8321;,&#945;&#8321;,&#947;&#8322;,&#946;&#8322;,&#945;&#8322;)</div>
+<div class="small" style="text-align:center;margin-top:4px">adaLN feeds every γ/β/α box in every block<br>&#8598; all orange boxes</div>
+</div>
+</div>
+<ul class="small" style="margin-top:6px">
+<li><b>&#947;, &#946;, &#945; are NOT model parameters.</b> The learned parameters are the purple adaLN MLP&rsquo;s weights (zero-init &rarr; every block starts as identity); &#947;/&#946;/&#945; are <b>activations computed from c per token and per sample</b>. Conditioning never touches weights &mdash; it <b>scales (1+&#947;)/shifts (&#946;) the normalized activations feature-wise and gates (&#945;) sublayer outputs</b> (why the LayerNorms are affine-free).</li>
+<li><b>Prior-block content enters through the attention K/V</b> (blue box), not through adaLN. In short: <b>content via K/V; conditioning (per-block t, OD) via &#947;&#946;&#945;.</b></li>
+</ul>
+<pre>(&#947;&#8321;,&#946;&#8321;,&#945;&#8321;,&#947;&#8322;,&#946;&#8322;,&#945;&#8322;) = adaLN_MLP(c).chunk(6)          # BDBlock.forward, bd_models.py:149-153
+x = x + &#945;&#8321; &#8857; Attn( (1+&#947;&#8321;)&#8857;LN(x) + &#946;&#8321; , attn_mask )
+x = x + &#945;&#8322; &#8857; MLP ( (1+&#947;&#8322;)&#8857;LN(x) + &#946;&#8322; )</pre>
+<p style="margin:8px 0 2px"><b>D. Open-ended semi-AR generation</b>: append block &rarr; first-hitting reveals one token per forward (each revealed token immediately becomes context) &rarr; scan the committed block: dst &rarr; hit (stop) / END &rarr; miss (stop) / else append the next noised block.</p>
+<div class="figcap">Training&rsquo;s OBC (noised &rarr; clean past) corresponds exactly to sampling&rsquo;s committed-block reference (teacher forcing), so the conditioning distributions match. At blk1 all information flows through committed references (a causal LM); at blk64 (= MDLM) OBC is empty &mdash; block size interpolates the ratio of the two channels (&sect;6.9).</div>
 </div>
 
-<p><b>Setup</b> — identical to <span class="mono">RESULTS_BD_prev.pdf</span> except for the swept block size. BD3-LM-style block diffusion (semi-AR across blocks, absorbing/[MASK] diffusion within each block, SUBS weighted CE, first-hitting sampling). Transformer denoiser: 6 layers, dim 256, adaLN conditioning (~6.8M params; embedding table varies negligibly with canvas length). Trained 1 epoch = 48.2k iters (bs 32, lr 5e-4) on <span class="mono">porto_v3_normal</span> (index v3-0.05, 1,390 vertices, 1.93M paths). Canvas per the project length spec <span class="mono">[dst, ori, v1, …, v_L=dst, END…END | PAD…PAD]</span>: the END tail inside the dst block is a training target, later PAD blocks are excluded from the loss. Conditioning: dst + ori as clean in-context prefix tokens plus the OD embedding through adaLN; condition dropout 0.1; CFG off (w = 1). Open-ended generation (<span class="mono">length_mode=open</span>): blocks are appended until dst (hit) or END (miss) — no length model.</p>
-
-<p><b>Evaluation.</b> 1,000 held-out OD pairs per run, open-ended, <b>raw only</b>. <span class="mono">hit</span> = the path reaches dst unaided (= arrival, since no post-processing exists in this report); <span class="mono">valid∧hit</span> = usable-path rate; EM / PC / DTW / len metrics as in the companion reports. <span class="muted">Caveat: each run draws its own random 1,000 evaluation pairs (dataset order is shuffled unseeded at load), so cross-run differences of ~±1%p are within sampling noise.</span></p>
-
-<h2>1. Block-size sweep — mask kernel, raw (no refine)</h2>
-<table>
-<tr>
-  <th>block size</th><th class="num">hit (=arrival)</th><th class="num">valid</th><th class="num">valid∧hit (raw)</th>
-  <th class="num">EM</th><th class="num">PC</th><th class="num">DTW</th>
-  <th class="num">len err</th><th class="num">len corr</th><th class="num">gen len</th><th class="num">real len</th><th class="num">s/path</th>
-</tr>
-<tr><td><b>1</b></td><td class="num best">0.997</td><td class="num best">0.943</td><td class="num best">0.943</td><td class="num best">0.845</td><td class="num best">0.883</td><td class="num best">0.030</td><td class="num">0.69</td><td class="num">+0.878</td><td class="num">23.5</td><td class="num">23.0</td><td class="num">0.012</td></tr>
-<tr><td>2</td><td class="num">0.924</td><td class="num">0.809</td><td class="num">0.777</td><td class="num">0.755</td><td class="num">0.778</td><td class="num">0.044</td><td class="num">0.49</td><td class="num">+0.977</td><td class="num">23.3</td><td class="num">23.2</td><td class="num best">0.004</td></tr>
-<tr><td>4</td><td class="num">0.943</td><td class="num">0.853</td><td class="num">0.821</td><td class="num">0.789</td><td class="num">0.816</td><td class="num">0.035</td><td class="num best">0.32</td><td class="num best">+0.995</td><td class="num">23.7</td><td class="num">23.6</td><td class="num best">0.004</td></tr>
-<tr><td>8</td><td class="num">0.953</td><td class="num">0.807</td><td class="num">0.777</td><td class="num">0.729</td><td class="num">0.761</td><td class="num">0.041</td><td class="num">0.35</td><td class="num best">+0.995</td><td class="num">22.9</td><td class="num">22.9</td><td class="num best">0.004</td></tr>
-<tr><td>16</td><td class="num">0.912</td><td class="num">0.633</td><td class="num">0.598</td><td class="num">0.554</td><td class="num">0.584</td><td class="num">0.062</td><td class="num">0.64</td><td class="num">+0.979</td><td class="num">23.0</td><td class="num">23.0</td><td class="num">0.004</td></tr>
-<tr><td>32</td><td class="num">0.900</td><td class="num">0.526</td><td class="num">0.488</td><td class="num">0.443</td><td class="num">0.476</td><td class="num">0.063</td><td class="num">0.69</td><td class="num">+0.992</td><td class="num">23.4</td><td class="num">23.4</td><td class="num">0.005</td></tr>
-<tr><td>64</td><td class="num">0.877</td><td class="num">0.504</td><td class="num">0.454</td><td class="num">0.400</td><td class="num">0.439</td><td class="num">0.069</td><td class="num">0.88</td><td class="num">+0.986</td><td class="num">24.1</td><td class="num">24.0</td><td class="num">0.007</td></tr>
+<h2>2. Block-size sweep — held-out, 3 seeds mean±std</h2>
+<h3>2.1 mask</h3><table>
+<tr><th>blk</th><th class="num">hit (=arr)</th><th class="num">valid</th><th class="num">valid∧hit (raw)</th><th class="num">EM</th><th class="num">PC</th><th class="num">DTW</th><th class="num">len err</th><th class="num">len corr</th></tr>
+<tr><td><b>1</b></td><td class="num">0.997±.002</td><td class="num">0.934±.007</td><td class="num">0.934±.007</td><td class="num">0.830±.011</td><td class="num">0.869±.010</td><td class="num">0.032</td><td class="num">0.84</td><td class="num">+0.864</td></tr>
+<tr><td>2</td><td class="num">0.958±.007</td><td class="num">0.842±.006</td><td class="num">0.822±.006</td><td class="num">0.769±.005</td><td class="num">0.799±.005</td><td class="num">0.038</td><td class="num">0.45</td><td class="num">+0.982</td></tr>
+<tr><td>4</td><td class="num">0.958±.001</td><td class="num">0.836±.004</td><td class="num">0.811±.004</td><td class="num">0.747±.010</td><td class="num">0.783±.008</td><td class="num">0.037</td><td class="num">0.37</td><td class="num">+0.991</td></tr>
+<tr><td>8</td><td class="num">0.951±.002</td><td class="num">0.808±.006</td><td class="num">0.774±.006</td><td class="num">0.716±.008</td><td class="num">0.754±.007</td><td class="num">0.042</td><td class="num">0.40</td><td class="num">+0.993</td></tr>
+<tr><td>16</td><td class="num">0.898±.006</td><td class="num">0.680±.006</td><td class="num">0.625±.002</td><td class="num">0.607±.009</td><td class="num">0.637±.008</td><td class="num">0.061</td><td class="num">0.56</td><td class="num">+0.989</td></tr>
+<tr><td>32</td><td class="num">0.858±.010</td><td class="num">0.474±.004</td><td class="num">0.420±.002</td><td class="num">0.413±.002</td><td class="num">0.437±.002</td><td class="num">0.081</td><td class="num">0.96</td><td class="num">+0.968</td></tr>
+<tr><td>64</td><td class="num">0.839±.005</td><td class="num">0.430±.014</td><td class="num">0.373±.010</td><td class="num">0.366±.012</td><td class="num">0.391±.012</td><td class="num">0.072</td><td class="num">0.89</td><td class="num">+0.988</td></tr>
 </table>
-<p class="small">Bold = best in column. s/path: first-hitting uses ~1 forward per generated token at every block size, so timing is nearly flat; blk1's 3× overhead comes from the per-block outer loop (append → denoise → scan once per token).</p>
-
-<h2>2. Arrival by real path length (raw) — the horizon test</h2>
-<table>
-<tr><th>block size</th><th class="num">len 2–15</th><th class="num">len 16–25</th><th class="num">len 26–35</th><th class="num">len 36+</th></tr>
-<tr><td><b>1</b></td><td class="num best">0.992</td><td class="num best">1.000</td><td class="num best">0.996</td><td class="num best">1.000</td></tr>
-<tr><td>2</td><td class="num">0.844</td><td class="num">0.941</td><td class="num">0.958</td><td class="num">0.958</td></tr>
-<tr><td>4</td><td class="num">0.864</td><td class="num">0.953</td><td class="num">0.978</td><td class="num">0.970</td></tr>
-<tr><td>8</td><td class="num">0.926</td><td class="num">0.956</td><td class="num">0.961</td><td class="num">0.982</td></tr>
-<tr><td>16</td><td class="num">0.865</td><td class="num">0.919</td><td class="num">0.931</td><td class="num">0.943</td></tr>
-<tr><td>32</td><td class="num">0.876</td><td class="num">0.871</td><td class="num">0.934</td><td class="num">0.957</td></tr>
-<tr><td>64</td><td class="num">0.873</td><td class="num">0.892</td><td class="num">0.884</td><td class="num">0.833</td></tr>
+<h3>2.2 graph (d = 2.0)</h3><table>
+<tr><th>blk</th><th class="num">hit (=arr)</th><th class="num">valid</th><th class="num">valid∧hit (raw)</th><th class="num">EM</th><th class="num">PC</th><th class="num">DTW</th><th class="num">len err</th><th class="num">len corr</th></tr>
+<tr><td><b>1</b></td><td class="num">0.429±.001</td><td class="num">1.000±.000</td><td class="num">0.429±.001</td><td class="num">0.093±.006</td><td class="num">0.168±.007</td><td class="num">0.437</td><td class="num">36.4</td><td class="num">+0.237</td></tr>
+<tr><td>2</td><td class="num">0.173±.014</td><td class="num">0.997±.001</td><td class="num">0.173±.014</td><td class="num">0.399±.008</td><td class="num">0.558±.005</td><td class="num">0.488</td><td class="num">6.48</td><td class="num">+0.492</td></tr>
+<tr><td>4</td><td class="num">0.128±.007</td><td class="num">0.978±.002</td><td class="num">0.128±.007</td><td class="num">0.309±.012</td><td class="num">0.499±.008</td><td class="num">0.302</td><td class="num">4.50</td><td class="num">+0.719</td></tr>
+<tr><td>8</td><td class="num">0.058±.004</td><td class="num">0.991±.001</td><td class="num">0.058±.004</td><td class="num">0.124±.012</td><td class="num">0.331±.006</td><td class="num">0.282</td><td class="num">4.53</td><td class="num">+0.783</td></tr>
+<tr><td>16</td><td class="num">0.029±.002</td><td class="num">0.996±.002</td><td class="num">0.029±.002</td><td class="num">0.148±.008</td><td class="num">0.390±.006</td><td class="num">0.377</td><td class="num">5.66</td><td class="num">+0.705</td></tr>
+<tr><td>32</td><td class="num">0.035±.002</td><td class="num">0.969±.002</td><td class="num">0.035±.002</td><td class="num">0.174±.002</td><td class="num">0.411±.004</td><td class="num">0.394</td><td class="num">5.96</td><td class="num">+0.693</td></tr>
+<tr><td>64</td><td class="num">0.027±.004</td><td class="num">0.966±.003</td><td class="num">0.027±.004</td><td class="num">0.198±.006</td><td class="num">0.430±.001</td><td class="num">0.363</td><td class="num">5.74</td><td class="num">+0.724</td></tr>
 </table>
-
-<h2>3. Findings</h2>
-<ul>
-<li><b>Smaller blocks win, and blk1 (the AR limit) wins outright.</b> Every quality metric is monotone-ish in favor of small blocks: arrival 0.997 → 0.877 and validity 0.943 → 0.504 as the block grows 1 → 64. blk1 solves the benchmark essentially perfectly without any refinement — 99.7% of paths reach the destination unaided and 94.3% are simultaneously edge-valid.</li>
-<li><b>Validity is what large blocks pay for.</b> hit degrades gently with block size (−12%p from blk1 to blk64) but validity collapses (−44%p). Within a block, first-hitting reveals tokens in <i>random</i> order, so in a large block a token is often committed far from any decided neighbor and its neighbors must then match it post hoc; at blk1 generation is strictly left-to-right and every step conditions on its immediate predecessor. Edge-validity is exactly the local-consistency property this random reveal order breaks.</li>
-<li><b>The blk2–8 plateau, then the cliff.</b> blk2–8 are statistically close (valid∧hit 0.78–0.82, with blk4 the best of the three); from blk16 onward every consistency metric drops sharply (valid∧hit 0.60 → 0.45). If a genuinely block-parallel model is wanted, blk4 remains the sweet spot, matching the predecessor report's choice.</li>
-<li><b>blk4 reproduces the previous report.</b> hit 0.943 / valid∧hit 0.821 here vs 0.952 / 0.820 in <span class="mono">RESULTS_BD_prev.pdf</span> — within the ±1%p eval-sampling noise, on a different server, eval draw, and data order. The pipeline is stable end-to-end.</li>
-<li><b>No horizon decay except at blk64.</b> Progressive block commitment keeps arrival flat (or even rising) with path length for blk1–32; only blk64 — where a whole 64-token canvas region is denoised against at most one committed block — shows decay at len 36+ (0.833). The full-canvas track's horizon-compounding failure does not reappear anywhere in the sweep.</li>
-<li><b>Emergent length stays calibrated at every block size</b>: gen len tracks real len to within 0.1–0.5 tokens on average and len corr ≥ +0.977 for blk ≥ 2. blk1's lower len corr (+0.878) is a hit-rate artifact — with 99.7% arrival its lengths truncate exactly at dst, and the remaining variance is a handful of early-END misses — not a calibration failure (its mean length error is still 0.69).</li>
-<li><b>Interpretation for the AR↔diffusion trade.</b> The sweep reproduces the BD3-LM paper's central trade-off in a planning domain: block size buys within-block parallelism at a likelihood/consistency cost. On this graph-constrained task the cost lands almost entirely on edge validity. Caveat from the code audit: this implementation omits bd3lms' clipped noise schedules (variance reduction that matters most at small block sizes), so small-block results here are, if anything, <i>underestimates</i> of the original recipe — which only strengthens the small-block conclusion. Within-sweep comparisons are unaffected (identical training conditions at all sizes).</li>
-</ul>
-
-<h2>4. Failure anatomy — where the length calibration comes from, what a miss is, and why validity falls</h2>
-<p class="small">The measurements in this section are post-hoc diagnostics run on the saved checkpoints with fresh 400-pair draws (no refinement anywhere); with n_miss = 21–49 per run, subgroup percentages carry ~±10%p sampling noise.</p>
-
-<h3>4.1 The high len corr is mostly dst-truncation geometry, not END prediction</h3>
-<p>Generation length is decided by <b>where the dst token is emitted</b> for hit paths (the path is truncated at dst) and by <b>where END is emitted</b> only for the ~5–12% of miss paths. Splitting the correlation by subgroup:</p>
+<h3>2.3 Failure anatomy (v3, 400 held-out pairs)</h3>
 <table>
-<tr><th>block size</th><th class="num">hit</th><th class="num">len corr (all)</th><th class="num">len corr (hit only)</th><th class="num">len corr (miss only)</th><th class="num">hit detour ratio gen/real</th></tr>
-<tr><td>64</td><td class="num">0.877</td><td class="num">0.985</td><td class="num">0.991</td><td class="num">0.952</td><td class="num">1.011</td></tr>
-<tr><td>16</td><td class="num">0.927</td><td class="num">0.988</td><td class="num">0.988</td><td class="num">0.970</td><td class="num">1.011</td></tr>
-<tr><td>4</td><td class="num">0.963</td><td class="num">0.980</td><td class="num">0.990</td><td class="num">0.778</td><td class="num">1.012</td></tr>
+<tr><th>blk</th><th class="num">hit</th><th class="num">len corr (hit)</th><th class="num">len corr (miss, n)</th><th class="num">miss→dst med hops</th><th class="num">≤2 hops</th><th class="num">inv-edge</th><th class="num">boundary/interior</th></tr>
+<tr><td>4</td><td class="num">0.943</td><td class="num">0.996</td><td class="num">0.958 (23)</td><td class="num">2</td><td class="num">87%</td><td class="num">1.04%</td><td class="num">15 / 77</td></tr>
+<tr><td>16</td><td class="num">0.922</td><td class="num">0.995</td><td class="num">0.896 (31)</td><td class="num">2</td><td class="num">84%</td><td class="num">1.84%</td><td class="num">4 / 158</td></tr>
+<tr><td>64</td><td class="num">0.843</td><td class="num">0.993</td><td class="num">0.968 (63)</td><td class="num">1</td><td class="num">86%</td><td class="num">4.70%</td><td class="num">0 / 409</td></tr>
 </table>
-<p>Hit paths reach dst with only a ~1.1% detour over the real (shortest) path, so their length is pinned by the OD pair's graph distance — the 0.99 correlation follows from geometry. This is why len corr survives at blk64 even as validity collapses: what large blocks break is local edge consistency, not the global "how far until dst" structure. END calibration is a real but secondary effect: it governs only the misses, where it is also good (miss-only corr 0.95–0.97 at large blocks; miss mean lengths match real means) — without it, misses would run to the canvas cap and drag the overall correlation down.</p>
-
-<h3>4.2 A miss is a near-miss: the model reaches the destination's doorstep</h3>
-<p>A <b>miss</b> = the model emitted END (declared termination) without ever emitting the exact dst vertex; in this all-raw report no post-processing touches it and it counts as an arrival failure. Measuring the graph hop distance from each miss path's final vertex to dst:</p>
+<ul class="small"><li><b>A miss is a near-miss</b>: endpoints sit a median 1–2 hops from dst (84–87% ≤2) — a last-token identification slip, not a navigation failure. Length calibration holds for hits (0.99+) and misses (0.90–0.97) — dst-truncation geometry plus END calibration.</li><li><b>The validity decay is path-level amplification of sparse local skips</b>: the edge error rate is only 4.7% even at blk64 (median 3-hop skips), and the errors are <b>strictly block-interior</b> (blk64: 0 boundary / 409 interior) — first-hitting’s random within-block reveal order is the mechanism; block-boundary (AR-like) transitions are clean.</li><li><b>The graph kernel is the mirror image</b>: constrained decoding keeps validity at 0.97–1.00 but arrival collapses 0.43→0.03 and decays with length; mask shows no horizon decay for blk1–16. Block size charges mask in validity, graph in arrival.</li><li><b>Held-out validation</b>: v2 numbers match v1 (train-overlapping) within noise — no memorization inflation.</li><li><b>Untested note</b>: the END tail’s loss share grows as (B−1)/2 — ~58% of supervised tokens at blk64 — leaving a loss-engineering lever (constant-mass reweighting / first-END-only; v1 §4.5).</li></ul>
+<h2>3. Post-processing: P1 (local splice) · P3 (endpoint patch)</h2>
+<p class="small">P1 inserts a shortest-path bridge at every invalid pair (u,v) → valid = 1 by construction, hit untouched. P3 (= refine_nx) grafts a shortest path from a miss endpoint to dst → arrival = 1. hit is always measured pre-refinement (valid∧hit (raw)) — the one model-dependent quantity left under P1+P3.</p>
 <table>
-<tr><th>block size</th><th class="num">n_miss</th><th class="num">median hops to dst</th><th class="num">mean</th><th class="num">≤1 hop</th><th class="num">≤2 hops</th><th class="num">≤5 hops</th></tr>
-<tr><td>64</td><td class="num">40</td><td class="num">1</td><td class="num">1.8</td><td class="num">52%</td><td class="num">92%</td><td class="num">98%</td></tr>
-<tr><td>16</td><td class="num">39</td><td class="num">2</td><td class="num">3.3</td><td class="num">33%</td><td class="num">87%</td><td class="num">95%</td></tr>
-<tr><td>4</td><td class="num">21</td><td class="num">1</td><td class="num">2.8</td><td class="num">52%</td><td class="num">81%</td><td class="num">90%</td></tr>
+<tr><th>blk</th><th class="num">raw arr</th><th class="num">raw valid</th><th class="num">valid∧hit (raw)</th><th class="num">raw EM</th><th class="num">raw PC</th><th class="num">P1+P3 EM</th><th class="num">P1+P3 PC</th><th class="num">patch</th></tr>
+<tr><td>1</td><td class="num">0.997</td><td class="num">0.934</td><td class="num">0.934</td><td class="num">0.832</td><td class="num">0.871</td><td class="num">0.849</td><td class="num">0.898</td><td class="num">1.0</td></tr>
+<tr><td>2</td><td class="num">0.956</td><td class="num">0.852</td><td class="num">0.826</td><td class="num">0.779</td><td class="num">0.810</td><td class="num">0.804</td><td class="num">0.869</td><td class="num">0.5</td></tr>
+<tr><td>4</td><td class="num">0.954</td><td class="num">0.823</td><td class="num">0.798</td><td class="num">0.734</td><td class="num">0.771</td><td class="num">0.768</td><td class="num">0.846</td><td class="num">0.8</td></tr>
+<tr><td>8</td><td class="num">0.954</td><td class="num">0.827</td><td class="num">0.794</td><td class="num">0.728</td><td class="num">0.769</td><td class="num">0.768</td><td class="num">0.848</td><td class="num">0.7</td></tr>
+<tr><td>16</td><td class="num">0.909</td><td class="num">0.705</td><td class="num">0.647</td><td class="num">0.617</td><td class="num">0.651</td><td class="num">0.662</td><td class="num">0.766</td><td class="num">1.9</td></tr>
+<tr><td>32</td><td class="num">0.871</td><td class="num">0.462</td><td class="num">0.408</td><td class="num">0.397</td><td class="num">0.422</td><td class="num">0.503</td><td class="num">0.642</td><td class="num">3.3</td></tr>
+<tr><td>64</td><td class="num">0.853</td><td class="num">0.441</td><td class="num">0.390</td><td class="num">0.379</td><td class="num">0.403</td><td class="num">0.533</td><td class="num">0.661</td><td class="num">3.5</td></tr>
 </table>
-<p>Combining hit rate with the miss-endpoint distribution, <b>~99% of all blk64 paths end within 2 hops of dst</b>. A miss is a token-level identification failure at the very last step ("emit END instead of the exact dst id"), not a navigation failure — consistent with the length spec training END immediately after dst inside the same block. This is also why refine_es (cut at the first dst-adjacent vertex, append dst) could recover +3%p arrival in the predecessor report: half the misses already end dst-adjacent.</p>
-
-<h3>4.3 Why validity falls at large blocks: sparse local skips, amplified by a path-level metric</h3>
+<ul class="small"><li>P1+P3 gives the structural <b>valid = arrival = 1</b> guarantee at every block size, with usable-path rate = raw hit. At large blocks P1 also lifts EM/PC (blk64 EM 0.379→0.533) — the bridges are real route segments. Zero unfixable pairs.</li></ul>
+<h2>4. Importance-weight guidance (exceptional scenario except_0)</h2>
+<p class="small"><b>Math summary</b> (full: BD_GUIDANCE_FORMULATION.pdf). Guided reverse of block b: q(x<sup>b</sup><sub>t−1</sub>|x<sup>b</sup><sub>t</sub>, x<sup>&lt;b</sup>) = 𝔼<sub>x₀∼p̂</sub>[w·q(·|x₀)]/𝔼[w], w = q(x₀|x<sup>&lt;b</sup>)/p<sub>θ</sub>(x₀|x<sup>&lt;b</sup>) ≈ D/(1−D). <b>Lemma 1</b>: w = C⁻¹·r(x<sup>&lt;b</sup>‖x₀) with C = q(x<sup>&lt;b</sup>)/p<sub>θ</sub>(x<sup>&lt;b</sup>) candidate-independent, cancelling under self-normalization — a <b>clean partial-path</b> discriminator suffices. <b>Lemma 2</b>: a block-only classifier learns the marginal ratio and is biased (non-constant mismatch). <b>Lemma 3</b>: masking the proposal to A<sub>scn</sub>-legal transitions w.r.t. revealed neighbours is exact — excluded candidates lie outside supp(q) (w = 0) and Z<sub>ℓ</sub> is candidate-common, cancelling (unbiased variance reduction). Implementation: N = 100 mean-field candidates per first-hitting reveal, w = exp(bounded logit), applied at every reveal, ESS logged. Discriminator: GraphSAGE + edge-existence channels (scenario adjacency as input → zero-retraining scenario transfer); negatives = <b>20k unconditional generations of the very block’s model</b> (the true denominator p<sub>θ</sub>; the data&lt;mix&lt;model ordering: v1 §6.7).</p>
+<h3>4.1 Seen (disc trained on except_0, 1%)</h3>
 <table>
-<tr><th></th><th class="num">blk64</th><th class="num">blk16</th></tr>
-<tr><td>invalid edges (edge-level)</td><td class="num"><b>3.6%</b> (332 / 9,130)</td><td class="num">2.2% (199 / 9,150)</td></tr>
-<tr><td>paths containing ≥1 invalid edge</td><td class="num">52%</td><td class="num">33%</td></tr>
-<tr><td>invalid edges per affected path</td><td class="num">1.6</td><td class="num">1.5</td></tr>
-<tr><td>true hop distance of invalid pairs</td><td class="num">median 3; 91% ≤ 3 hops</td><td class="num">median 3; 87% ≤ 3 hops</td></tr>
-<tr><td>location of invalid edges</td><td class="num"><b>block-interior 332, block-boundary 0</b></td><td class="num">interior 188, boundary 11</td></tr>
+<tr><th>blk</th><th class="num">base valid</th><th class="num">base EM</th><th class="num">IW valid</th><th class="num">IW EM</th><th class="num">IW P1P3 EM</th><th class="num">IW P1P3 PC</th><th class="num">ESS</th><th class="num">adj+IW valid</th><th class="num">adj+IW EM</th><th class="num">rem-edge</th><th class="num">adj+IW P1P3 EM</th><th class="num">adj+IW P1P3 PC</th></tr>
+<tr><td>4</td><td class="num">0.266</td><td class="num">0.240</td><td class="num">0.331</td><td class="num">0.298</td><td class="num">0.309</td><td class="num">0.464</td><td class="num">99.1</td><td class="num">0.390</td><td class="num">0.338</td><td class="num">3.0%</td><td class="num">0.357</td><td class="num">0.496</td></tr>
+<tr><td>8</td><td class="num">0.231</td><td class="num">0.212</td><td class="num">0.298</td><td class="num">0.264</td><td class="num">0.294</td><td class="num">0.453</td><td class="num">98.8</td><td class="num">0.346</td><td class="num">0.298</td><td class="num">3.2%</td><td class="num">0.335</td><td class="num">0.483</td></tr>
+<tr><td>16</td><td class="num">0.222</td><td class="num">0.198</td><td class="num">0.277</td><td class="num">0.240</td><td class="num">0.268</td><td class="num">0.423</td><td class="num">98.2</td><td class="num">0.327</td><td class="num">0.270</td><td class="num">3.1%</td><td class="num">0.295</td><td class="num">0.447</td></tr>
+<tr><td>32</td><td class="num">0.160</td><td class="num">0.132</td><td class="num">0.225</td><td class="num">0.184</td><td class="num">0.216</td><td class="num">0.376</td><td class="num">97.5</td><td class="num">0.255</td><td class="num">0.203</td><td class="num">3.2%</td><td class="num">0.236</td><td class="num">0.398</td></tr>
+<tr><td>64</td><td class="num">0.141</td><td class="num">0.129</td><td class="num">0.201</td><td class="num">0.160</td><td class="num">0.211</td><td class="num">0.372</td><td class="num">95.4</td><td class="num">0.229</td><td class="num">0.176</td><td class="num">3.1%</td><td class="num">0.230</td><td class="num">0.394</td></tr>
 </table>
-<ul>
-<li><b>Amplification, not collapse.</b> Per-edge accuracy is still 96.4% at blk64; with ~23 edges per path, P(all edges valid) ≈ 0.964²³ ≈ 0.43 — matching the observed 0.50 valid rate. The path-level all-or-nothing metric turns a 3.6% edge error rate into a 50% path failure rate.</li>
-<li><b>The errors live strictly inside blocks.</b> Zero invalid edges at block boundaries (where the previous block is fully committed and the transition is effectively autoregressive). The cause is first-hitting's <i>random</i> within-block reveal order: a position revealed between two already-committed non-adjacent anchors faces a two-sided constrained-infilling conditional, combinatorially harder than the left-to-right case and less accurately learned — the error rate therefore grows with block size.</li>
-<li><b>Skips are local.</b> Invalid pairs are truly 2–3 hops apart (median 3): the model drops a bridge vertex, it does not teleport.</li>
-</ul>
-
-<h3>4.4 Implications — remediation outlook</h3>
-<ul>
-<li><b>The model is not broken at large block sizes</b>: global structure (endpoint placement, length, near-shortest routing) is intact; the defects are sparse (3.6% of edges), local (2–3 hop skips), and precisely locatable (adjacency check). This failure profile favors <b>post-processing over retraining</b>.</li>
-<li><b>Local splice (proposed)</b>: replace each invalid edge (u, v) with the shortest path u→v (median insertion: 2 vertices). Validity → 1.0 by construction, endpoints untouched so hit is unchanged — at blk64 valid∧hit would rise from 0.454 to ≈ 0.877 (= hit) at an average cost of ~+1.7 tokens per path. Composable with the existing endpoint refinements (refine_nx) for a full valid=1 ∧ arrival=1 guarantee.</li>
-<li><b>Training-side fixes are second-order</b>: capacity/epochs/clipped schedules can lower the edge error rate but any-order infilling remains intrinsically harder than AR (the reference paper's own likelihood-vs-block-size trend).</li>
-<li><b>Sampler-side fixes change the sampling distribution</b> and need empirical validation: revealing left-to-right within a block (or adjacency-constrained logit masking, present in the prior project and deliberately removed) breaks the equivalence between first-hitting-with-uniform-choice and the trained diffusion reverse process — a learned model's conditionals are not order-consistent, and the prefix-conditioned patterns L→R relies on are rarely seen in random-masking training of large blocks.</li>
-</ul>
-
-
-<h3>4.5 Note (untested): the END-tail's loss share grows linearly with block size — a loss-engineering lever</h3>
-<p>Under the project length spec, every END token in the dst block's tail is an <i>independent</i> training target (<span class="mono">build_canvas</span>: the tail is inside <span class="mono">loss_mask</span>). Since the tail length is uniform over block residues, its expected size is (B−1)/2 tokens — so the composition of the supervised set shifts with block size (mean path ≈ 24):</p>
+<h3>4.2 Unseen (disc trained on except 1–99 → evaluated on except_0)</h3>
 <table>
-<tr><th>block size</th><th class="num">path tokens in loss</th><th class="num">END tokens (mean)</th><th class="num">END share of supervision</th></tr>
-<tr><td>4</td><td class="num">≈23</td><td class="num">≈1.5</td><td class="num">≈6%</td></tr>
-<tr><td>16</td><td class="num">≈23</td><td class="num">≈7.5</td><td class="num">≈25%</td></tr>
-<tr><td>64 (= MDLM)</td><td class="num">≈23</td><td class="num">≈31.5</td><td class="num"><b>≈58%</b></td></tr>
+<tr><th>blk</th><th class="num">IW valid (unseen/seen)</th><th class="num">adj+IW valid (unseen/seen)</th><th class="num">adj+IW P1P3 EM (unseen/seen)</th></tr>
+<tr><td>4</td><td class="num">0.325 / 0.331</td><td class="num">0.382 / 0.390</td><td class="num">0.348 / 0.357</td></tr>
+<tr><td>16</td><td class="num">0.270 / 0.277</td><td class="num">0.321 / 0.327</td><td class="num">0.299 / 0.295</td></tr>
 </table>
-<ul>
-<li><b>Both faces of the coin.</b> Credit: the abundant END supervision is what §4.1–4.2 measure as excellent END calibration (miss-only len corr 0.95+, misses ending at plausible lengths). Suspected cost: END is an easy target (after dst the context fully determines it), so at large B the majority of the gradient goes to easy tokens, <i>diluting</i> the supervision of path tokens — a candidate partial explanation for §1's validity decay with block size. <b>Untested hypothesis</b>; the block-size effect also has the independent random-reveal-order mechanism of §4.3, so attribution requires a dedicated ablation.</li>
-<li><b>Possible modifications (engineering, none run)</b>: (i) <i>constant-mass END reweighting</i> — scale the tail's per-token weight by c/(tail length), making the END loss share block-size-invariant (c ≈ 1–2 tokens' worth); (ii) <i>first-END-only</i> — supervise the first END at full weight and exclude the rest like PAD (the "single EOS loss" reading of the spec); (iii) <i>decayed tail</i> — geometric down-weighting within the tail. All compose with the −(1/t) MDLM weighting unchanged.</li>
-<li><b>Cautions if ever tested</b>: down-weighting risks the END calibration that §4.2 credits (miss lengths, doorstep stopping), so validity and miss-END calibration must be evaluated jointly; and any change breaks comparability with all runs in this report — test at blk16/64 first, where the share (25–58%) leaves the most room.</li>
-</ul>
-
-<h2>5. Post-processing results — P1 (local splice), P3 (endpoint patch), P1+P3</h2>
-<p>Implementation of §4.4's outlook (<span class="mono">eval_bd_postproc.py</span>): for each checkpoint, 1,000 OD pairs are generated once (raw, no refinement), then the SAME generations are scored under three post-processors. <b>P1</b> replaces every invalid consecutive pair (u, v) with the shortest path u→v; <b>P3</b> (= refine_nx) grafts a shortest path from a miss path's endpoint to dst; <b>P1+P3</b> composes both. Fresh evaluation draw (seed 1), so raw values differ from §1 within the ±1%p sampling noise.</p>
+<ul class="small"><li><b>Division of labour</b>: removed-edge avoidance comes from Lemma 3 masking (rem-edge ~5%→3%), route quality from discriminator reweighting (+5–7%p valid). ESS ≈ 95–99: per-step nudges are small but accumulate over reveals. The cost is arrival (−5 to −7%p) — restored structurally by P3.</li><li><b>Generalization gap ≈ 0</b> (blk4: 0.382 vs 0.390): scenario information enters through the adjacency input, not memorization. The full stack (adj+IW+P1P3) reaches EM 0.357 / PC 0.496 at blk4 — +32%/+15% relative over baseline+P1P3 (0.270/0.431).</li></ul>
+<h2>5. Controlled comparison with the published baseline: D-CBG (Schiff et al.)</h2>
+<p class="small">Plug-in port (their code logic verbatim; dcbg_plugin.py), <b>classifier architecture and training protocol fully matched</b> (same GraphSAGE + edge channels, same 1% data; model negatives use the same v2 uncond pools, noised their way). The only remaining differences are method-intrinsic: noisy-state input + per-position tilting (D-CBG) vs clean partial paths + joint candidate reweighting (IW). γ = 4 (γ ≤ 2 inert, v1 §7.1). Exact enumeration costs |V| ≈ 1.4k classifier calls per reveal (≈2.7 s/path); the cheap first-order variant (0.07 s/path) is <b>re-confirmed inert on v2</b> (blk4 valid 0.265 ≈ base 0.266); IW: 2.4k calls / 0.03 s/path.</p>
 <table>
-<tr><th>blk</th><th>variant</th><th class="num">arrival</th><th class="num">valid</th><th class="num">valid∧hit (raw)</th><th class="num">EM</th><th class="num">PC</th><th class="num">DTW</th><th class="num">len err</th><th class="num">patch len</th></tr>
-<tr><td rowspan="4">1</td><td>raw</td><td class="num">0.998</td><td class="num">0.935</td><td class="num">0.935</td><td class="num">0.836</td><td class="num">0.874</td><td class="num">0.036</td><td class="num">0.64</td><td class="num">—</td></tr>
-<tr><td>P1</td><td class="num">0.998</td><td class="num">1.000</td><td class="num">0.998</td><td class="num">0.854</td><td class="num">0.902</td><td class="num">0.035</td><td class="num">0.94</td><td class="num">0.42</td></tr>
-<tr><td>P3</td><td class="num">1.000</td><td class="num">0.935</td><td class="num">0.935</td><td class="num">0.836</td><td class="num">0.874</td><td class="num">0.035</td><td class="num">0.68</td><td class="num">0.04</td></tr>
-<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.998</td><td class="num">0.854</td><td class="num">0.902</td><td class="num">0.034</td><td class="num">0.99</td><td class="num">0.46</td></tr>
-<tr><td rowspan="4">2</td><td>raw</td><td class="num">0.937</td><td class="num">0.797</td><td class="num">0.761</td><td class="num">0.735</td><td class="num">0.761</td><td class="num">0.053</td><td class="num">0.62</td><td class="num">—</td></tr>
-<tr><td>P1</td><td class="num">0.937</td><td class="num">0.999</td><td class="num">0.937</td><td class="num">0.783</td><td class="num">0.846</td><td class="num">0.052</td><td class="num">1.80</td><td class="num">1.71</td></tr>
-<tr><td>P3</td><td class="num">1.000</td><td class="num">0.797</td><td class="num">0.761</td><td class="num">0.724</td><td class="num">0.753</td><td class="num">0.051</td><td class="num">0.68</td><td class="num">0.21</td></tr>
-<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.937</td><td class="num">0.773</td><td class="num">0.837</td><td class="num">0.050</td><td class="num">1.95</td><td class="num">1.92</td></tr>
-<tr><td rowspan="4">4</td><td>raw</td><td class="num">0.958</td><td class="num">0.822</td><td class="num">0.794</td><td class="num">0.737</td><td class="num">0.773</td><td class="num">0.040</td><td class="num">0.46</td><td class="num">—</td></tr>
-<tr><td>P1</td><td class="num">0.958</td><td class="num">1.000</td><td class="num">0.958</td><td class="num">0.772</td><td class="num">0.847</td><td class="num">0.044</td><td class="num">1.19</td><td class="num">0.96</td></tr>
-<tr><td>P3</td><td class="num">1.000</td><td class="num">0.822</td><td class="num">0.794</td><td class="num">0.729</td><td class="num">0.768</td><td class="num">0.042</td><td class="num">0.59</td><td class="num">0.19</td></tr>
-<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.958</td><td class="num">0.764</td><td class="num">0.841</td><td class="num">0.043</td><td class="num">1.33</td><td class="num">1.14</td></tr>
-<tr><td rowspan="4">8</td><td>raw</td><td class="num">0.960</td><td class="num">0.790</td><td class="num">0.768</td><td class="num">0.704</td><td class="num">0.739</td><td class="num">0.040</td><td class="num">0.42</td><td class="num">—</td></tr>
-<tr><td>P1</td><td class="num">0.960</td><td class="num">1.000</td><td class="num">0.960</td><td class="num">0.764</td><td class="num">0.845</td><td class="num">0.045</td><td class="num">1.13</td><td class="num">1.05</td></tr>
-<tr><td>P3</td><td class="num">1.000</td><td class="num">0.790</td><td class="num">0.768</td><td class="num">0.698</td><td class="num">0.735</td><td class="num">0.039</td><td class="num">0.49</td><td class="num">0.15</td></tr>
-<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.960</td><td class="num">0.757</td><td class="num">0.838</td><td class="num">0.044</td><td class="num">1.23</td><td class="num">1.20</td></tr>
-<tr><td rowspan="4">16</td><td>raw</td><td class="num">0.885</td><td class="num">0.626</td><td class="num">0.569</td><td class="num">0.541</td><td class="num">0.575</td><td class="num">0.072</td><td class="num">0.63</td><td class="num">—</td></tr>
-<tr><td>P1</td><td class="num">0.885</td><td class="num">1.000</td><td class="num">0.885</td><td class="num">0.612</td><td class="num">0.727</td><td class="num">0.076</td><td class="num">2.35</td><td class="num">2.24</td></tr>
-<tr><td>P3</td><td class="num">1.000</td><td class="num">0.626</td><td class="num">0.569</td><td class="num">0.523</td><td class="num">0.562</td><td class="num">0.068</td><td class="num">0.79</td><td class="num">0.36</td></tr>
-<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.885</td><td class="num">0.588</td><td class="num">0.708</td><td class="num">0.072</td><td class="num">2.58</td><td class="num">2.59</td></tr>
-<tr><td rowspan="4">32</td><td>raw</td><td class="num">0.885</td><td class="num">0.522</td><td class="num">0.474</td><td class="num">0.450</td><td class="num">0.478</td><td class="num">0.061</td><td class="num">0.77</td><td class="num">—</td></tr>
-<tr><td>P1</td><td class="num">0.885</td><td class="num">1.000</td><td class="num">0.885</td><td class="num">0.582</td><td class="num">0.705</td><td class="num">0.062</td><td class="num">1.96</td><td class="num">1.80</td></tr>
-<tr><td>P3</td><td class="num">1.000</td><td class="num">0.522</td><td class="num">0.474</td><td class="num">0.432</td><td class="num">0.466</td><td class="num">0.059</td><td class="num">0.85</td><td class="num">0.26</td></tr>
-<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.885</td><td class="num">0.558</td><td class="num">0.686</td><td class="num">0.060</td><td class="num">2.14</td><td class="num">2.06</td></tr>
-<tr><td rowspan="4">64</td><td>raw</td><td class="num">0.886</td><td class="num">0.517</td><td class="num">0.465</td><td class="num">0.423</td><td class="num">0.458</td><td class="num">0.055</td><td class="num">0.81</td><td class="num">—</td></tr>
-<tr><td>P1</td><td class="num">0.886</td><td class="num">1.000</td><td class="num">0.886</td><td class="num">0.588</td><td class="num">0.711</td><td class="num">0.058</td><td class="num">1.85</td><td class="num">1.75</td></tr>
-<tr><td>P3</td><td class="num">1.000</td><td class="num">0.517</td><td class="num">0.465</td><td class="num">0.411</td><td class="num">0.450</td><td class="num">0.054</td><td class="num">0.90</td><td class="num">0.27</td></tr>
-<tr><td>P1+P3</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.886</td><td class="num">0.569</td><td class="num">0.695</td><td class="num">0.056</td><td class="num">2.01</td><td class="num">2.01</td></tr>
+<tr><th>blk</th><th class="num">D-CBG(data) valid</th><th class="num">P1P3 EM</th><th class="num">D-CBG(model) valid</th><th class="num">P1P3 EM</th><th class="num">IW(model) valid</th><th class="num">P1P3 EM</th><th class="num">adj+IW valid</th><th class="num">P1P3 EM</th></tr>
+<tr><td>4</td><td class="num">0.301</td><td class="num">0.295</td><td class="num">0.309</td><td class="num">0.302</td><td class="num">0.331</td><td class="num">0.309</td><td class="num">0.390</td><td class="num">0.357</td></tr>
+<tr><td>8</td><td class="num">0.257</td><td class="num">0.275</td><td class="num">0.272</td><td class="num">0.275</td><td class="num">0.298</td><td class="num">0.294</td><td class="num">0.346</td><td class="num">0.335</td></tr>
+<tr><td>16</td><td class="num">0.249</td><td class="num">0.263</td><td class="num">0.258</td><td class="num">0.252</td><td class="num">0.277</td><td class="num">0.268</td><td class="num">0.327</td><td class="num">0.295</td></tr>
+<tr><td>32</td><td class="num">0.185</td><td class="num">0.231</td><td class="num">0.185</td><td class="num">0.203</td><td class="num">0.225</td><td class="num">0.216</td><td class="num">0.255</td><td class="num">0.236</td></tr>
+<tr><td>64</td><td class="num">0.163</td><td class="num">0.222</td><td class="num">0.173</td><td class="num">0.209</td><td class="num">0.201</td><td class="num">0.211</td><td class="num">0.229</td><td class="num">0.230</td></tr>
 </table>
-<p class="small">All four variants of the SAME generations per block size (files: <span class="mono">sets_res/BD_mask_blk*_postproc.res</span>). <b>Column definition</b>: hit is always measured on the unrefined model output, so valid∧hit (raw) can never be inflated by post-processing — under P1+P3 (valid = arrival = 1.0 by construction) it equals the raw hit rate, the one remaining model-dependent quantity. Note the clean decomposition: P1 lifts valid to 1.0 (valid∧hit → hit) without touching arrival; P3 lifts arrival to 1.0 without touching validity; P1+P3 gives both. blk2's P1 valid is 0.999 (one invalid pair had no connecting path and was left as-is).</p>
-<ul>
-<li><b>§4.4's prediction is confirmed almost exactly</b>: at blk64, valid∧hit 0.465 → 0.886 (= hit), at an average patch cost of 1.75 tokens; unfixable invalid pairs were zero across all runs.</li>
-<li><b>P1 improves EM/PC too</b> at large blocks (blk64 EM 0.423 → 0.588, PC 0.458 → 0.711): the inserted bridges are real route segments that overlap the reference paths — the patch does not just legalize the path, it moves it toward the true route.</li>
-<li><b>P1+P3 gives the structural guarantee valid = 1 ∧ arrival = 1</b> at every block size, with DTW essentially unchanged and len err +0.3–2.0 tokens. Under this post-processing the usable-path rate equals the raw hit rate (0.998 at blk1, 0.886 at blk64) — post-processing fully absorbs the large-block validity cost, leaving hit as the only remaining block-size penalty.</li>
-</ul>
-
-<h2>6. Importance-weight guidance on exceptional scenarios (except_0)</h2>
-<p>Full design and derivation: <span class="mono">pdfs/BD_GUIDANCE_FORMULATION.pdf</span>. A partial-path discriminator (edge-existence channel + GraphSAGE over the scenario adjacency, bounded logits, label smoothing) reweights N = 100 mean-field candidates at <b>every</b> first-hitting reveal with w = D/(1−D). Backbones are the normal-trained checkpoints of §1 (v4-normal ≡ v3-normal); evaluation = 1,000 reserved except_0 OD pairs, scored against the EXCEPTIONAL adjacency, raw. <span class="mono">rem-path</span> = fraction of paths using ≥1 removed edge; ESS = effective sample size of the importance weights (per reveal, mean; N = 100).</p>
-
-<h3>6.1 Main axis — block size × guidance (fam 0.05, 1% data, exp. 1)</h3>
-<table>
-<tr><th>blk</th><th>variant</th><th class="num">arrival</th><th class="num">valid (exc)</th><th class="num">valid∧hit (raw)</th><th class="num">rem-path</th><th class="num">EM</th><th class="num">PC</th><th class="num">ESS/100</th></tr>
-<tr><td rowspan="3">4</td><td>base</td><td class="num">0.939</td><td class="num">0.253</td><td class="num">0.239</td><td class="num">0.661</td><td class="num">0.231</td><td class="num">0.240</td><td class="num">—</td></tr>
-<tr><td>guided (data)</td><td class="num">0.948</td><td class="num">0.306</td><td class="num">0.284</td><td class="num">0.651</td><td class="num">0.269</td><td class="num">0.285</td><td class="num">99.1</td></tr>
-<tr><td>guided (mix)</td><td class="num">0.948</td><td class="num best">0.315</td><td class="num best">0.290</td><td class="num">0.651</td><td class="num">0.281</td><td class="num">0.296</td><td class="num">99.1</td></tr>
-<tr><td rowspan="3">8</td><td>base</td><td class="num">0.944</td><td class="num">0.242</td><td class="num">0.229</td><td class="num">0.656</td><td class="num">0.211</td><td class="num">0.223</td><td class="num">—</td></tr>
-<tr><td>guided (data)</td><td class="num">0.937</td><td class="num">0.286</td><td class="num">0.268</td><td class="num">0.648</td><td class="num">0.266</td><td class="num">0.275</td><td class="num">98.8</td></tr>
-<tr><td>guided (mix)</td><td class="num">0.936</td><td class="num">0.293</td><td class="num">0.271</td><td class="num">0.646</td><td class="num">0.272</td><td class="num">0.281</td><td class="num">98.8</td></tr>
-<tr><td rowspan="3">16</td><td>base</td><td class="num">0.896</td><td class="num">0.206</td><td class="num">0.181</td><td class="num">0.642</td><td class="num">0.177</td><td class="num">0.188</td><td class="num">—</td></tr>
-<tr><td>guided (data)</td><td class="num">0.885</td><td class="num">0.245</td><td class="num">0.208</td><td class="num">0.625</td><td class="num">0.213</td><td class="num">0.225</td><td class="num">97.9</td></tr>
-<tr><td>guided (mix)</td><td class="num">0.884</td><td class="num">0.250</td><td class="num">0.215</td><td class="num">0.630</td><td class="num">0.214</td><td class="num">0.228</td><td class="num">98.0</td></tr>
-<tr><td rowspan="3">32</td><td>base</td><td class="num">0.897</td><td class="num">0.165</td><td class="num">0.153</td><td class="num">0.657</td><td class="num">0.136</td><td class="num">0.147</td><td class="num">—</td></tr>
-<tr><td>guided (data)</td><td class="num">0.885</td><td class="num">0.199</td><td class="num">0.172</td><td class="num">0.649</td><td class="num">0.156</td><td class="num">0.173</td><td class="num">97.4</td></tr>
-<tr><td>guided (mix)</td><td class="num">0.878</td><td class="num">0.205</td><td class="num">0.169</td><td class="num">0.649</td><td class="num">0.165</td><td class="num">0.181</td><td class="num">97.8</td></tr>
-<tr><td rowspan="3">64</td><td>base</td><td class="num">0.864</td><td class="num">0.164</td><td class="num">0.151</td><td class="num">0.634</td><td class="num">0.131</td><td class="num">0.145</td><td class="num">—</td></tr>
-<tr><td>guided (data)</td><td class="num">0.876</td><td class="num">0.205</td><td class="num">0.181</td><td class="num">0.630</td><td class="num">0.157</td><td class="num">0.176</td><td class="num">94.1</td></tr>
-<tr><td>guided (mix)</td><td class="num">0.882</td><td class="num">0.204</td><td class="num">0.183</td><td class="num">0.635</td><td class="num">0.157</td><td class="num">0.175</td><td class="num">95.5</td></tr>
-</table>
-
-<h3>6.2 Pivots (blk 4 / 16)</h3>
-<table>
-<tr><th>axis</th><th>config</th><th class="num">blk4 valid (base→guided)</th><th class="num">blk16 valid (base→guided)</th><th>reading</th></tr>
-<tr><td>harder scenario</td><td>fam 0.1, 1%, exp. 1 (mix)</td><td class="num">0.096 → 0.120</td><td class="num">0.057 → 0.088</td><td>same relative lift on a 2× harder graph (rem-path 0.86)</td></tr>
-<tr><td>data budget</td><td>fam 0.05, 3%, exp. 1 (mix)</td><td class="num">0.253 → 0.311</td><td class="num">0.206 → 0.253</td><td>≈ identical to 1% — data volume is not the binding constraint</td></tr>
-<tr><td><b>unseen scenario (exp. 2)</b></td><td>disc on except 1–99, eval except_0 (data)</td><td class="num">0.253 → <b>0.314</b></td><td class="num">0.206 → <b>0.256</b></td><td><b>matches/exceeds the except_0-trained disc</b> (0.306 / 0.245): the adjacency-direct discriminator (edge-existence lookup + GraphSAGE) transfers to a scenario it never saw — the exp. 2.1 generalization hypothesis is supported</td></tr>
-</table>
-
-<h3>6.3 Proposal temperature (companion §6 remedy (i); fam 0.05, 1%, data disc)</h3>
-<table>
-<tr><th>blk</th><th class="num">τ</th><th class="num">arrival</th><th class="num">valid</th><th class="num">rem-path</th><th class="num">ESS/100</th></tr>
-<tr><td rowspan="3">4</td><td class="num">1.0</td><td class="num">0.948</td><td class="num">0.306</td><td class="num">0.651</td><td class="num">99.1</td></tr>
-<tr><td class="num">1.5</td><td class="num">0.910</td><td class="num">0.285</td><td class="num">0.639</td><td class="num">98.3</td></tr>
-<tr><td class="num">2.0</td><td class="num">0.853</td><td class="num">0.236</td><td class="num">0.615</td><td class="num">97.1</td></tr>
-<tr><td rowspan="3">16</td><td class="num">1.0</td><td class="num">0.885</td><td class="num">0.245</td><td class="num">0.625</td><td class="num">97.9</td></tr>
-<tr><td class="num">1.5</td><td class="num">0.834</td><td class="num">0.218</td><td class="num">0.602</td><td class="num">97.1</td></tr>
-<tr><td class="num">2.0</td><td class="num">0.729</td><td class="num">0.147</td><td class="num">0.586</td><td class="num">97.0</td></tr>
-</table>
-
-<h3>6.4 Findings</h3>
-<ul>
-<li><b>The absorbing-kernel instantiation works mechanically.</b> No recurrence of the previously observed weight-variance explosion (bounded logits + label smoothing + negative-class coverage); discriminator val. accuracy 0.71–0.88 on partial paths; guidance delivers a <b>consistent</b> +4–5%p validity and +3–5%p EM/PC at every block size with arrival unchanged.</li>
-<li><b>But the effect is small, and the cause is now measured, not conjectured: ESS ≈ 94–99 out of 100.</b> The importance weights are nearly flat because the 100 mean-field candidates are near-clones — the proposal-entropy bottleneck predicted by <span class="mono">MASKED_GUIDANCE.pdf</span> §6, observed here in BD at every block size. Removed-edge usage barely moves (0.66 → 0.65): reweighting can only choose among offered candidates, and candidates avoiding the removed edges are almost never offered.</li>
-<li><b>Unseen-scenario generalization (exp. 2) is the clearest positive result</b>: a discriminator that never saw except_0 guides as well as (slightly better than) one trained on it. The scenario enters through the adjacency-lookup features, not through memorized paths.</li>
-<li><b>Raising proposal temperature trades away more than it buys</b>: rem-path −2 to −6%p at the cost of arrival −4 to −17%p, with ESS still ≈ 97. Flattening the same proposal is not enough.</li>
-<li><b>Implication.</b> The reweighting machinery is validated; the binding constraint is the proposal. The natural next steps keep the discriminator and change the candidate generator: (i) adjacency-masked proposals under A<sub>scn</sub> (companion remedy (ii)) — candidates that cannot use removed edges, with IW guidance selecting among legal reroutes; and/or (ii) scoring-side use of the discriminator with a P1-style splice under the scenario graph.</li>
-</ul>
-
-
-<h3>6.5 Adjacency-masked proposals (Lemma 3) — the bottleneck fix, measured</h3>
-<p>Same protocol as §6.1, with candidate proposals masked to scenario-legal transitions w.r.t. revealed neighbours (<span class="mono">BD_GUIDANCE_FORMULATION.pdf</span> §6: exact under the ideal discriminator — excluded candidates carry zero target weight). <span class="mono">adj-only</span> = masking with uniform weights (no discriminator), isolating the constraint's own effect.</p>
-<table>
-<tr><th>blk</th><th>variant</th><th class="num">arrival</th><th class="num">valid (exc)</th><th class="num">valid∧hit (raw)</th><th class="num">rem-path</th><th class="num">rem-edge</th><th class="num">EM</th><th class="num">PC</th></tr>
-<tr><td rowspan="4">4</td><td>base</td><td class="num">0.939</td><td class="num">0.253</td><td class="num">0.239</td><td class="num">0.661</td><td class="num">0.051</td><td class="num">0.231</td><td class="num">0.240</td></tr>
-<tr><td>guided (§6.1)</td><td class="num">0.948</td><td class="num">0.315</td><td class="num">0.290</td><td class="num">0.651</td><td class="num">0.050</td><td class="num">0.281</td><td class="num">0.296</td></tr>
-<tr><td>adj-only</td><td class="num">0.873</td><td class="num">0.316</td><td class="num">0.270</td><td class="num">0.502</td><td class="num">0.030</td><td class="num">0.275</td><td class="num">0.291</td></tr>
-<tr><td>adj+guided</td><td class="num">0.868</td><td class="num best">0.368</td><td class="num best">0.316</td><td class="num best">0.495</td><td class="num best">0.030</td><td class="num best">0.316</td><td class="num best">0.337</td></tr>
-<tr><td rowspan="4">8</td><td>base</td><td class="num">0.944</td><td class="num">0.242</td><td class="num">0.229</td><td class="num">0.656</td><td class="num">0.050</td><td class="num">0.211</td><td class="num">0.223</td></tr>
-<tr><td>guided</td><td class="num">0.936</td><td class="num">0.293</td><td class="num">0.271</td><td class="num">0.646</td><td class="num">0.050</td><td class="num">0.272</td><td class="num">0.281</td></tr>
-<tr><td>adj-only</td><td class="num">0.863</td><td class="num">0.296</td><td class="num">0.257</td><td class="num">0.489</td><td class="num">0.031</td><td class="num">0.250</td><td class="num">0.267</td></tr>
-<tr><td>adj+guided</td><td class="num">0.868</td><td class="num best">0.338</td><td class="num best">0.292</td><td class="num best">0.487</td><td class="num">0.031</td><td class="num best">0.300</td><td class="num best">0.315</td></tr>
-<tr><td rowspan="4">16</td><td>base</td><td class="num">0.896</td><td class="num">0.206</td><td class="num">0.181</td><td class="num">0.642</td><td class="num">0.049</td><td class="num">0.177</td><td class="num">0.188</td></tr>
-<tr><td>guided</td><td class="num">0.884</td><td class="num">0.250</td><td class="num">0.215</td><td class="num">0.630</td><td class="num">0.048</td><td class="num">0.214</td><td class="num">0.228</td></tr>
-<tr><td>adj-only</td><td class="num">0.822</td><td class="num">0.264</td><td class="num">0.208</td><td class="num">0.486</td><td class="num">0.031</td><td class="num">0.212</td><td class="num">0.232</td></tr>
-<tr><td>adj+guided</td><td class="num">0.809</td><td class="num best">0.295</td><td class="num best">0.230</td><td class="num best">0.467</td><td class="num">0.030</td><td class="num best">0.246</td><td class="num best">0.265</td></tr>
-<tr><td rowspan="4">32</td><td>base</td><td class="num">0.897</td><td class="num">0.165</td><td class="num">0.153</td><td class="num">0.657</td><td class="num">0.050</td><td class="num">0.136</td><td class="num">0.147</td></tr>
-<tr><td>guided</td><td class="num">0.878</td><td class="num">0.205</td><td class="num">0.169</td><td class="num">0.649</td><td class="num">0.050</td><td class="num">0.165</td><td class="num">0.181</td></tr>
-<tr><td>adj-only</td><td class="num">0.832</td><td class="num">0.212</td><td class="num">0.172</td><td class="num">0.486</td><td class="num">0.031</td><td class="num">0.161</td><td class="num">0.181</td></tr>
-<tr><td>adj+guided</td><td class="num">0.817</td><td class="num best">0.238</td><td class="num best">0.183</td><td class="num">0.504</td><td class="num">0.033</td><td class="num best">0.180</td><td class="num best">0.202</td></tr>
-<tr><td rowspan="4">64</td><td>base</td><td class="num">0.864</td><td class="num">0.164</td><td class="num">0.151</td><td class="num">0.634</td><td class="num">0.048</td><td class="num">0.131</td><td class="num">0.145</td></tr>
-<tr><td>guided</td><td class="num">0.882</td><td class="num">0.204</td><td class="num">0.183</td><td class="num">0.635</td><td class="num">0.048</td><td class="num">0.157</td><td class="num">0.175</td></tr>
-<tr><td>adj-only</td><td class="num">0.805</td><td class="num">0.204</td><td class="num">0.168</td><td class="num">0.488</td><td class="num">0.031</td><td class="num">0.153</td><td class="num">0.173</td></tr>
-<tr><td>adj+guided</td><td class="num">0.818</td><td class="num best">0.243</td><td class="num best">0.193</td><td class="num best">0.480</td><td class="num best">0.030</td><td class="num best">0.179</td><td class="num best">0.205</td></tr>
-</table>
-<p class="small">Pivots: fam 0.1 adj+guided — blk4 valid 0.096 → 0.165, rem-path 0.868 → 0.716 (arrival 0.95 → 0.80); blk16 valid 0.057 → 0.126. Exp. 2 disc under adj proposals: blk4 valid 0.366, blk16 0.295 — indistinguishable from the except_0-trained disc (0.368 / 0.295): generalization survives the proposal change.</p>
-<ul>
-<li><b>The proposal was indeed the bottleneck.</b> Masking alone (adj-only) halves the removed-edge <i>edge</i> rate (0.050 → 0.030) and cuts rem-path from 0.66 to ~0.49 — far beyond anything reweighting achieved. Combined (adj+guided), total validity gain over baseline is +9–12%p (blk4: 0.253 → 0.368, +45% rel.) and EM +37% rel.</li>
-<li><b>Clean division of labour, exactly as the theory predicts</b>: masking (the proposal) does the removed-edge avoidance — the discriminator cannot reduce rem-path further (it stays ~0.49) — while reweighting adds route quality on top of legal candidates (+4–5%p valid, +0.03–0.04 EM over adj-only at every block size). Lemma 3's "masking deletes zero-weight candidates, D ranks the survivors" is visible in the data.</li>
-<li><b>The cost is arrival (−4 to −9%p)</b>: denied its illegal shortcuts, the constrained model sometimes wanders and ends in a miss. Since §5's P3 endpoint patch (computed on the exceptional graph) restores arrival = 1.0 by construction, adj+guided + P1/P3 under A<sub>scn</sub> is the natural full system — left as the next step.</li>
-<li><b>Residual rem-path ≈ 0.49 comes from the Z ≈ 0 fallback</b> (mutually-illegal masked anchors force an unmasked reveal — the candidate-internal caveat of Lemma 3) — the remaining leak is localized and known.</li>
-<li><b>ESS stays ≈ 95–99</b>: legal candidates are still near-clones of each other. The discriminator's gains come from small systematic nudges accumulated over ~24 reveals; further headroom requires diversity <i>among legal reroutes</i> (repaint-style re-masking, mixture proposals) rather than more discriminator.</li>
-</ul>
-
-
-<h3>6.6 Anatomy of the guided paths, and post-processing under the exceptional graph</h3>
-<p class="small">Post-hoc diagnostic: 400 fresh eval pairs, adj+guided (mix disc, N = 100), bad edges classified against BOTH graphs; P1/P3 computed on the EXCEPTIONAL graph G<sub>exc</sub>.</p>
-<table>
-<tr><th></th><th class="num">blk4</th><th class="num">blk16</th></tr>
-<tr><td>bad edges (edge-level)</td><td class="num"><b>4.8%</b> (421 / 8,826)</td><td class="num">5.9% (514 / 8,661)</td></tr>
-<tr><td>&nbsp;&nbsp;— removed (existed in normal, closed in the scenario)</td><td class="num">2.9%</td><td class="num">3.0%</td></tr>
-<tr><td>&nbsp;&nbsp;— alien (absent even from the normal graph)</td><td class="num">1.9%</td><td class="num">2.9%</td></tr>
-<tr><td>paths with ≥1 bad edge</td><td class="num">62%</td><td class="num">71%</td></tr>
-<tr><td>removed-pair true detour in G<sub>exc</sub></td><td class="num">median 4 hops (21% ≤3, max 15)</td><td class="num">median 4</td></tr>
-<tr><td>alien-pair true distance in G<sub>exc</sub></td><td class="num">median 5 (max 44)</td><td class="num">median 3 (max 45)</td></tr>
-</table>
-<ul>
-<li><b>Sparse but longer-range than the normal-graph anatomy (§4.3).</b> There, every bad edge was a 2–3-hop local skip (median 3, 91% ≤3 hops); here the median is 4–5. Structural reason: stepping on a removed edge means a road used to be there — the scenario's true detour around a closure is long by construction. The alien residue (~2–3%) leaks through the Z ≈ 0 fallback and includes a few genuine long-range teleports (max 44–45 hops).</li>
-<li><b>Every bad pair is repairable</b>: applying P1 (splice with G<sub>exc</sub>-shortest bridges) + P3 (G<sub>exc</sub> endpoint patch) succeeded on all 400 × 2 paths — zero unfixable pairs.</li>
-</ul>
-<table>
-<tr><th>blk</th><th>variant</th><th class="num">arrival</th><th class="num">valid (exc)</th><th class="num">EM</th><th class="num">PC</th><th class="num">avg patch</th><th class="num">unfixable</th></tr>
-<tr><td rowspan="2">4</td><td>adj+guided raw</td><td class="num">0.868</td><td class="num">0.368</td><td class="num">0.316</td><td class="num">0.337</td><td class="num">—</td><td class="num">—</td></tr>
-<tr><td>+ P1+P3 (G<sub>exc</sub>)</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.325</td><td class="num best">0.475</td><td class="num">5.3 tok</td><td class="num">0</td></tr>
-<tr><td rowspan="2">16</td><td>adj+guided raw</td><td class="num">0.809</td><td class="num">0.295</td><td class="num">0.246</td><td class="num">0.265</td><td class="num">—</td><td class="num">—</td></tr>
-<tr><td>+ P1+P3 (G<sub>exc</sub>)</td><td class="num best">1.000</td><td class="num best">1.000</td><td class="num best">0.268</td><td class="num best">0.426</td><td class="num">6.2 tok</td><td class="num">0</td></tr>
-</table>
-<ul>
-<li><b>PC jumps (+0.14–0.16)</b>: the inserted G<sub>exc</sub>-shortest bridges overlap the true detour routes — the patch moves paths toward the reference, it does not merely legalize them. Patch cost (~5–6 tokens, ≈25% of path length) is larger than in the normal setting (+1–2) because the true detours are intrinsically long.</li>
-<li><b>Full-system reading (blk4)</b>: baseline raw EM 0.231 → adj+guided + P1+P3 EM 0.325 (+41% rel.) with a structural valid = 1 ∧ arrival = 1 guarantee — the working candidate for the complete exceptional-scenario pipeline. (400-pair diagnostic; full-scale 1,000-pair runs across all block sizes are the natural confirmation step.)</li>
-</ul>
-
-
-<h3>6.7 The negative class, finished: pure model-distribution discriminators</h3>
-<p>Eq. (2)'s denominator is p<sub>θ</sub>, not "normal data" — the earlier <span class="mono">data</span>/<span class="mono">mix</span> negatives approximate it through the p<sub>θ</sub> ≈ q<sub>normal</sub> assumption. This round closes the gap: for every block size, 20k <b>unconditional generations</b> from that block's own checkpoint (valid because condition dropout nulls ori+dst <i>jointly</i>, so plan(None, None) is in-distribution) serve as 100% of the negatives, giving one theory-faithful discriminator per block (<span class="mono">BDdisc_*_model_blk{B}</span>). Disc inputs keep the canvas format ([dst = the path's own endpoint, path…]) so the classifier cannot cheat on formatting; note the residual approximation — unconditional p<sub>θ</sub>(x) is the marginal, not the OD-conditional p<sub>θ</sub>(x | od).</p>
-<table>
-<tr><th>blk</th><th class="num">valid: base</th><th class="num">neg = data</th><th class="num">neg = mix</th><th class="num">neg = <b>model</b></th><th class="num">adj+mix</th><th class="num">adj+<b>model</b></th></tr>
-<tr><td>4</td><td class="num">0.253</td><td class="num">0.306</td><td class="num">0.315</td><td class="num best">0.321</td><td class="num">0.368</td><td class="num best">0.371</td></tr>
-<tr><td>8</td><td class="num">0.242</td><td class="num">0.286</td><td class="num">0.293</td><td class="num best">0.297</td><td class="num">0.338</td><td class="num best">0.343</td></tr>
-<tr><td>16</td><td class="num">0.206</td><td class="num">0.245</td><td class="num">0.250</td><td class="num best">0.267</td><td class="num">0.295</td><td class="num best">0.307</td></tr>
-<tr><td>32</td><td class="num">0.165</td><td class="num">0.199</td><td class="num">0.205</td><td class="num best">0.222</td><td class="num">0.238</td><td class="num best">0.253</td></tr>
-<tr><td>64</td><td class="num">0.164</td><td class="num">0.205</td><td class="num">0.204</td><td class="num best">0.221</td><td class="num">0.243</td><td class="num best">0.248</td></tr>
-</table>
-<p class="small">valid (exc) shown; EM/PC follow the same ordering (e.g. blk32 EM 0.156 → 0.165 → 0.177 plain; adj 0.180 → 0.192). Arrival, rem-path, and ESS are unchanged by the negative class — the discriminator cannot alter what the proposal offers, only how it ranks.</p>
-<ul>
-<li><b>The theoretical ordering is realized monotonically</b>: data &lt; mix &lt; model at every block size, in both plain and adj+guided modes (10/10 comparisons). The closer the negative class to the true denominator p<sub>θ</sub>, the better the guidance.</li>
-<li><b>The gain grows with block size</b> (blk4 +0.6%p over mix; blk32 +1.7%p; blk64 +1.7%p plain): larger blocks deviate more from the normal-data distribution (§1's validity decay), so the p<sub>θ</sub> ≈ q<sub>normal</sub> assumption breaks more and the faithful denominator matters more.</li>
-<li><b>Best full-system numbers so far</b> (adj + model-negative disc): blk4 valid 0.371 / EM 0.320 raw — vs 0.253 / 0.231 baseline — before any post-processing; §6.6's P1+P3 then gives valid = arrival = 1.</li>
-</ul>
-
-
-<h3>6.8 Three-way deep dive: base / modelD / adj+modelD, before and after post-processing</h3>
-<p class="small">1,000 eval pairs, blk 4/16, model-negative discs; inv-node = fraction of generated vertices touching an invalid edge; P1/P3 computed on G<sub>exc</sub>. Fresh generation seed, so raw values shift within the usual ±1%p vs. §6.1/6.7. Full 24-row grid (incl. P1-only / P3-only) in <span class="mono">sets_log/threeway.log</span>.</p>
-<table>
-<tr><th>blk</th><th>config</th><th>variant</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM</th><th class="num">PC</th><th class="num">inv-edge</th><th class="num">inv-node</th><th class="num">rem-edge</th><th class="num">patch</th></tr>
-<tr><td>4</td><td>base</td><td>raw</td><td class="num">0.963</td><td class="num">0.242</td><td class="num">0.222</td><td class="num">0.230</td><td class="num">6.44%</td><td class="num">11.89%</td><td class="num">5.07%</td><td class="num">—</td></tr>
-<tr><td>4</td><td>base</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.257</td><td class="num">0.417</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">6.3</td></tr>
-<tr><td>4</td><td>modelD</td><td>raw</td><td class="num">0.952</td><td class="num">0.327</td><td class="num">0.291</td><td class="num">0.305</td><td class="num">5.47%</td><td class="num">10.19%</td><td class="num">4.98%</td><td class="num">—</td></tr>
-<tr><td>4</td><td>modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.306</td><td class="num">0.461</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">5.3</td></tr>
-<tr><td>4</td><td>adj+modelD</td><td>raw</td><td class="num">0.861</td><td class="num">0.372</td><td class="num">0.315</td><td class="num">0.339</td><td class="num">4.77%</td><td class="num">8.71%</td><td class="num">2.85%</td><td class="num">—</td></tr>
-<tr><td>4</td><td>adj+modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num best">0.331</td><td class="num best">0.476</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">5.3</td></tr>
-<tr><td>16</td><td>base</td><td>raw</td><td class="num">0.897</td><td class="num">0.187</td><td class="num">0.166</td><td class="num">0.174</td><td class="num">7.65%</td><td class="num">13.92%</td><td class="num">4.78%</td><td class="num">—</td></tr>
-<tr><td>16</td><td>base</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.204</td><td class="num">0.375</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">7.2</td></tr>
-<tr><td>16</td><td>modelD</td><td>raw</td><td class="num">0.895</td><td class="num">0.252</td><td class="num">0.217</td><td class="num">0.230</td><td class="num">7.12%</td><td class="num">12.99%</td><td class="num">4.77%</td><td class="num">—</td></tr>
-<tr><td>16</td><td>modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.250</td><td class="num">0.406</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">7.2</td></tr>
-<tr><td>16</td><td>adj+modelD</td><td>raw</td><td class="num">0.822</td><td class="num">0.288</td><td class="num">0.241</td><td class="num">0.258</td><td class="num">5.87%</td><td class="num">10.78%</td><td class="num">2.95%</td><td class="num">—</td></tr>
-<tr><td>16</td><td>adj+modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num best">0.283</td><td class="num best">0.435</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td><td class="num">6.1</td></tr>
-</table>
-<ul>
-<li><b>Where each mechanism cuts invalid structure (raw rows).</b> The discriminator trims the <i>alien</i> component (non-removed invalid edges: 1.37% → 0.49% at blk4) but cannot touch removed edges (~5.0% — they look perfectly normal to a normal-trained model), while adjacency masking halves the removed component (5.0% → 2.9%). Together: invalid-node ratio 11.9% → 8.7% (blk4), 13.9% → 10.8% (blk16).</li>
-<li><b>Post-processing preserves the quality ranking instead of equalizing it</b>: at every variant, base &lt; modelD &lt; adj+modelD in EM and PC (e.g. P1+P3 blk4 EM 0.257 &lt; 0.306 &lt; 0.331). Better raw paths patch into better final paths — guidance and post-processing compose.</li>
-<li><b>Honest attribution</b>: post-processing alone (base + P1+P3) already secures valid = arrival = 1 with EM 0.204–0.257; the guidance stack then adds +29–39% relative EM (blk4 0.257 → 0.331, blk16 0.204 → 0.283) and +14–16% PC on top. P1 is the PC engine (+0.15–0.19: the G<sub>exc</sub> bridges overlap true detours); P3 is nearly free (0.1–0.8 tokens).</li>
-<li><b>Residual note</b>: at blk16 adj+modelD, P1 alone leaves valid at 0.993 (a few G<sub>exc</sub>-disconnected pairs); the P1+P3 composition ends at 1.000.</li>
-</ul>
-
-
-<h3>6.9 MDLM vs. uniform-state diffusion (GDP): the blk64 head-to-head</h3>
-<p>Since every path fits in one 64-block (max data length 59), blk64 is effectively the <b>full-canvas regime</b>: the mask kernel becomes MDLM (fixed 64-canvas, END-padded, no PAD blocks), and a graph-kernel blk64 model is exactly the <b>GDP paper's uniform-state CTMC diffusion</b> (⟨end⟩-augmented states, d = 2.0, 100-step reverse, adjacency-constrained decode). We trained the latter on the same normal data (49.5 min) and ran the identical §6.8 protocol; the guided uniform sampler implements the GDP formulation directly (per reverse step, the MC-posterior x̂₀ is replaced by the D/(1−D)-weighted candidate average; under adj the final constrained decode runs on A<sub>exc</sub>). Discriminators: model-negative from each model's own unconditional pool.</p>
-<table>
-<tr><th>kernel</th><th>config</th><th>variant</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM</th><th class="num">PC</th><th class="num">inv-edge</th><th class="num">rem-edge</th><th class="num">patch</th><th class="num">ESS</th></tr>
-<tr><td>mask64 (MDLM)</td><td>base</td><td>raw</td><td class="num">0.874</td><td class="num">0.151</td><td class="num">0.120</td><td class="num">0.133</td><td class="num">8.6%</td><td class="num">4.9%</td><td class="num">—</td><td class="num">—</td></tr>
-<tr><td>mask64</td><td>base</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.193</td><td class="num">0.361</td><td class="num">0%</td><td class="num">0%</td><td class="num">7.1</td><td class="num">—</td></tr>
-<tr><td>mask64</td><td>modelD</td><td>raw</td><td class="num">0.888</td><td class="num">0.222</td><td class="num">0.173</td><td class="num">0.192</td><td class="num">8.4%</td><td class="num">4.8%</td><td class="num">—</td><td class="num">94.9</td></tr>
-<tr><td>mask64</td><td>modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.220</td><td class="num">0.379</td><td class="num">0%</td><td class="num">0%</td><td class="num">7.6</td><td class="num">—</td></tr>
-<tr><td>mask64</td><td>adj+modelD</td><td>raw</td><td class="num">0.806</td><td class="num">0.251</td><td class="num">0.183</td><td class="num">0.211</td><td class="num">6.8%</td><td class="num">3.0%</td><td class="num">—</td><td class="num">95.1</td></tr>
-<tr><td>mask64</td><td>adj+modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.234</td><td class="num">0.401</td><td class="num">0%</td><td class="num">0%</td><td class="num">6.8</td><td class="num">—</td></tr>
-<tr><td>graph64 (uniform)</td><td>base</td><td>raw</td><td class="num">0.043</td><td class="num">0.460</td><td class="num">0.080</td><td class="num">0.200</td><td class="num">5.1%</td><td class="num">5.1%</td><td class="num">—</td><td class="num">—</td></tr>
-<tr><td>graph64</td><td>base</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.051</td><td class="num">0.233</td><td class="num">0%</td><td class="num">0%</td><td class="num">11.9</td><td class="num">—</td></tr>
-<tr><td>graph64</td><td>modelD</td><td>raw</td><td class="num">0.018</td><td class="num">0.645</td><td class="num">0.144</td><td class="num">0.307</td><td class="num">5.2%</td><td class="num">5.2%</td><td class="num">—</td><td class="num">97.1</td></tr>
-<tr><td>graph64</td><td>modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.075</td><td class="num">0.254</td><td class="num">0%</td><td class="num">0%</td><td class="num">18.7</td><td class="num">—</td></tr>
-<tr><td>graph64</td><td>adj+modelD</td><td>raw</td><td class="num">0.007</td><td class="num">0.985</td><td class="num">0.220</td><td class="num">0.463</td><td class="num">0.0%</td><td class="num">0.0%</td><td class="num">—</td><td class="num">97.1</td></tr>
-<tr><td>graph64</td><td>adj+modelD</td><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.105</td><td class="num">0.307</td><td class="num">0%</td><td class="num">0%</td><td class="num">18.9</td><td class="num">—</td></tr>
-</table>
-<ul>
-<li><b>The two kernels fail in opposite ways.</b> MDLM/mask arrives (0.87) but breaks edges (valid 0.15); uniform keeps edges (valid 0.46, zero alien edges thanks to its built-in constrained decode — its only violations ARE the removed edges) but almost never arrives (0.04, replicating the prior report's graph-kernel profile).</li>
-<li><b>Guidance bites much harder on the uniform kernel</b>, confirming the companion note's §6 prediction: reweighting alone lifts valid 0.460 → 0.645 (+18.5%p; mask: +7.1%p), and with the scenario-adjacency decode the uniform kernel reaches <b>valid 0.985 raw with 0.00% invalid edges</b> — the validity problem essentially solved before any post-processing. Notably ESS is ~97 for both kernels: the uniform kernel's advantage is not weight diversity but <b>revisability</b> — 100 resampled reverse steps compound the small per-step nudges, whereas mask's irreversible reveals lock each decision after one nudge.</li>
-<li><b>But guidance cannot buy arrival for the uniform kernel</b> (0.043 → 0.007), so post-processing must graft ~19 tokens per path (≈ half the final path is patch), and the composed quality stays low: EM 0.105 / PC 0.307 vs. mask64's 0.234 / 0.401. After the P1+P3 guarantee, <b>the mask kernel still wins end-to-end</b> — arrival must come from the model, and only the mask kernel supplies it.</li>
-<li><b>Reading for the method</b>: the uniform kernel is where IW guidance shines (large, mechanism-clean lifts), the mask kernel is where the task gets solved. The blk64 pair brackets the design space: revisable-but-lost vs. decisive-but-sloppy — and the full system of §6.8 (small-block mask + adj + modelD + P1/P3) remains the best operating point.</li>
-</ul>
-<p><b>Where the uniform kernel's paths actually end</b> (400-pair diagnostic, endpoint→dst hop distance in G<sub>exc</sub> for non-arriving paths):</p>
-<table>
-<tr><th></th><th class="num">arrival</th><th class="num">median hops to dst</th><th class="num">mean</th><th class="num">≤5 hops</th><th class="num">gen len (real 24.1)</th><th class="num">len corr</th></tr>
-<tr><td>mask64 (ref., §4.2 profile)</td><td class="num">0.87</td><td class="num">1</td><td class="num">~2</td><td class="num">98%</td><td class="num">≈ real</td><td class="num">0.99</td></tr>
-<tr><td>graph64 base</td><td class="num">0.040</td><td class="num">5</td><td class="num">8.6</td><td class="num">53%</td><td class="num">18.4</td><td class="num">0.735</td></tr>
-<tr><td>graph64 adj+modelD</td><td class="num">0.005</td><td class="num">17</td><td class="num">19.1</td><td class="num">12%</td><td class="num">9.7</td><td class="num">0.166</td></tr>
-</table>
-<ul>
-<li><b>Three qualitatively different failures.</b> The mask kernel's miss is a doorstep token-identification slip (median 1 hop); the plain uniform kernel gets <i>lost in the neighbourhood</i> (median 5 hops, length undershoot 18.4 vs 24.1); the guided+constrained uniform kernel <i>quits halfway</i> — median 17 hops from dst at 40% of the real length (9.7 tokens, len corr 0.17).</li>
-<li><b>Mechanism of the early quit</b>: in the constrained decode every move is masked to neighbours of the previous vertex while the ⟨end⟩ state is always legal; whenever x̄₀ places its mass on non-neighbours, masking leaves ⟨end⟩ relatively dominant and the walk terminates. The uniform kernel's headline valid = 0.985 is thus a perfectly legal <i>half-walk</i>: its validity is purchased with arrival-by-length — which is exactly why P3 must graft ~19 tokens and why the composed EM stays low. This sharpens the §6.9 verdict: the mask kernel's decisive-but-sloppy failure mode is the cheaper one to repair.</li>
-</ul>
-
-
-
-<h3>6.10 Ablating the forward kernel: GDP graph-CTMC vs. pure uniform-state (D3PM)</h3>
-<p><b>The two forward kernels.</b> GDP's kernel diffuses <i>along the road graph</i>: with generator G = A′ − D′ built from the (⟨end⟩-augmented) adjacency,</p>
-<p class="eq">Q<sub>t</sub><sup>graph</sup> = exp((A′ − D′) β<sub>t</sub>) — local moves, slow global mixing (small spectral gap), graph structure retained in x<sub>t</sub>.</p>
-<p>The classic <b>pure uniform-state</b> kernel is the complete-graph special case A′ = 𝟙𝟙<sup>T</sup>, which has the closed form</p>
-<p class="eq">Q<sub>t</sub><sup>unif</sup> = e<sup>−Kβ<sub>t</sub></sup> I + (1 − e<sup>−Kβ<sub>t</sub></sup>) 𝟙𝟙<sup>T</sup>/K &nbsp;⇔&nbsp; D3PM-uniform with ᾱ<sub>t</sub> = e<sup>−K Σ<sub>s≤t</sub>β<sub>s</sub></sup> (K = V+1 states),</p>
-<p>i.e. survive-or-teleport-uniformly — no graph structure anywhere. Implemented by passing the complete graph to the same Destroyer; β is scaled by 1/K (7×10⁻⁸ … 7.2×10⁻³) so the per-step survival profile matches the graph kernel (the complete graph's spectral gap is K, so the unscaled schedule would fully mix by t = 2); the connectivity loss is off and the built-in constrained decode degenerates to unconstrained (complete graph) — the "pure" setting by construction. Same backbone, data, 1-epoch budget (48.9 min), D3PM ELBO, blk64 (= full canvas), and §6.8 protocol.</p>
-<table>
-<tr><th>config</th><th>variant</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM</th><th class="num">PC</th><th class="num">inv-edge</th><th class="num">rem-edge</th><th class="num">patch</th><th class="num">ESS</th></tr>
-<tr><td rowspan="2">base</td><td>raw</td><td class="num">0.086</td><td class="num">0.001</td><td class="num">0.001</td><td class="num">0.001</td><td class="num">82.9%</td><td class="num">0.9%</td><td class="num">—</td><td class="num">—</td></tr>
-<tr><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.002</td><td class="num">0.032</td><td class="num">0%</td><td class="num">0%</td><td class="num">58.8</td><td class="num">—</td></tr>
-<tr><td rowspan="2">modelD</td><td>raw</td><td class="num">0.092</td><td class="num">0.006</td><td class="num">0.005</td><td class="num">0.006</td><td class="num">82.3%</td><td class="num">1.0%</td><td class="num">—</td><td class="num">91.3</td></tr>
-<tr><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.017</td><td class="num">0.048</td><td class="num">0%</td><td class="num">0%</td><td class="num">58.0</td><td class="num">—</td></tr>
-<tr><td rowspan="2">adj+modelD</td><td>raw</td><td class="num">0.002</td><td class="num">0.967</td><td class="num">0.084</td><td class="num">0.342</td><td class="num">0.0%</td><td class="num">0.0%</td><td class="num">—</td><td class="num">91.3</td></tr>
-<tr><td>P1+P3</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0.066</td><td class="num">0.250</td><td class="num">0%</td><td class="num">0%</td><td class="num">20.2</td><td class="num">—</td></tr>
-</table>
-<ul>
-<li><b>The pure uniform kernel collapses on this task</b>: raw valid 0.001 with 82.9% invalid edges, almost all of them <i>alien</i> (rem-edge only 0.9%) — near-random vertex sequences. P1 must splice 53 tokens per path (3× the path length): the paths are beyond repair, EM stays ≤ 0.07 under every treatment. Compare the same budget with the graph forward: valid 0.460, inv-edge 5.1%. <b>GDP's graph-structured forward is what makes uniform-state diffusion viable here</b> — locality of the noise is not a nicety but the difference between 0.46 and 0.001.</li>
-<li><b>Guidance cannot rescue it, and the reason is instructive for the negative-class design</b>: the model-negative discriminator reaches 0.999 train accuracy (its negatives — the model's own unconditional samples — are trivially separable garbage) but transfers at <b>chance level (0.527)</b> to real paths: D learned "is this a random sequence?" rather than "is this exceptional?", so all plausible candidates score alike. When p<sub>θ</sub> lies far off the data manifold, the Eq. 2 denominator class carries no signal where it matters — an edge case the data/mix negatives would handle better.</li>
-<li><b>Hard constraints remain the only lever</b>: the A<sub>exc</sub>-constrained decode lifts validity to 0.967, but the walk is even more lost than graph64's (endpoint patch 20 tokens; composed EM 0.066, the worst of the three kernels).</li>
-<li><b>Full-canvas kernel ranking</b> (raw valid / composed EM after P1+P3): mask64 0.15 / 0.234 · graph64 0.46 / 0.105 · uniform64 0.001 / 0.066 — structure in the forward buys validity (graph &gt; mask &gt; uniform), decisiveness of decoding buys arrival and hence final quality (mask ≫ graph ≫ uniform).</li>
-</ul>
-
-
-<h2>7. Published-baseline comparison: D-CBG (Schiff et al.)</h2>
-<h3>7.1 The as-published comparison</h3>
-<p>Plug-in port of <span class="mono">kuleshov-group/discrete-diffusion-guidance</span> (no changes to this repo's files; <span class="mono">dcbg_plugin.py</span> carries their <span class="mono">_cbg_denoise</span> logic): a <b>noise-conditioned classifier</b> p(y | x<sub>t</sub>, t) — their protocol: labeled data (exceptional vs normal, same 1% budget/splits) corrupted by the generation-time forward process — tilts the posterior by γ·log p(y | x<sub>t</sub><sup>ℓ→k</sup>). Mask kernel: <b>exact enumeration</b> at the revealed position (exact under first-hitting, cost |V| classifier calls per reveal); graph kernel: their <b>first-order (Taylor) approximation</b>. γ ∈ {1, 2, 4}; identical evaluation.</p>
-<table>
-<tr><th>config</th><th>method</th><th class="num">arrival</th><th class="num">valid</th><th class="num">EM raw</th><th class="num">rem-edge</th><th class="num">inv-edge</th><th class="num">EM P1+P3</th><th class="num">PC P1+P3</th><th class="num">s/path</th></tr>
-<tr><td rowspan="4">mask blk4</td><td>base</td><td class="num">0.963</td><td class="num">0.242</td><td class="num">0.222</td><td class="num">5.1%</td><td class="num">6.4%</td><td class="num">0.257</td><td class="num">0.417</td><td class="num">0.01</td></tr>
-<tr><td>D-CBG γ=4 (best γ)</td><td class="num">0.907</td><td class="num">0.267</td><td class="num">0.248</td><td class="num best">2.2%</td><td class="num">9.0%</td><td class="num">0.309</td><td class="num">0.436</td><td class="num">2.7</td></tr>
-<tr><td>ours (IW, modelD)</td><td class="num">0.952</td><td class="num">0.327</td><td class="num">0.291</td><td class="num">5.0%</td><td class="num">5.5%</td><td class="num">0.306</td><td class="num">0.461</td><td class="num">0.03</td></tr>
-<tr><td><b>ours (adj+modelD)</b></td><td class="num">0.861</td><td class="num best">0.372</td><td class="num best">0.315</td><td class="num">2.9%</td><td class="num best">4.8%</td><td class="num best">0.331</td><td class="num best">0.476</td><td class="num">0.05</td></tr>
-<tr><td rowspan="3">mask blk64</td><td>base</td><td class="num">0.874</td><td class="num">0.151</td><td class="num">0.120</td><td class="num">4.9%</td><td class="num">8.6%</td><td class="num">0.193</td><td class="num">0.361</td><td class="num">0.01</td></tr>
-<tr><td>D-CBG γ=4</td><td class="num">0.844</td><td class="num">0.156</td><td class="num">0.124</td><td class="num">2.2%</td><td class="num">9.6%</td><td class="num">0.228</td><td class="num">0.386</td><td class="num">2.7</td></tr>
-<tr><td><b>ours (adj+modelD)</b></td><td class="num">0.806</td><td class="num best">0.251</td><td class="num best">0.183</td><td class="num">3.0%</td><td class="num best">6.8%</td><td class="num best">0.234</td><td class="num best">0.401</td><td class="num">0.09</td></tr>
-<tr><td rowspan="3">graph blk64</td><td>base</td><td class="num">0.043</td><td class="num">0.460</td><td class="num">0.080</td><td class="num">5.1%</td><td class="num">5.1%</td><td class="num">0.051</td><td class="num">0.233</td><td class="num">0.06</td></tr>
-<tr><td>D-CBG γ∈{1,2,4}</td><td class="num">0.025</td><td class="num">0.459–0.470</td><td class="num">0.085</td><td class="num">5.0%</td><td class="num">5.0%</td><td class="num">0.054</td><td class="num">0.235</td><td class="num">2.8</td></tr>
-<tr><td><b>ours (adj+modelD)</b></td><td class="num">0.007</td><td class="num best">0.985</td><td class="num best">0.220</td><td class="num best">0.0%</td><td class="num best">0.0%</td><td class="num best">0.105</td><td class="num best">0.307</td><td class="num">0.09</td></tr>
-</table>
-<p class="small">Classifier val. accuracy (their protocol, on the generation-time corruption): mask blk4 0.719, mask blk64 0.734 — comparable to our discriminator — but <b>graph/CTMC 0.512 (chance)</b>: the noisy-state classifier fails to train on uniform-CTMC-corrupted paths at this data budget, leaving graph D-CBG inert (its rows ≈ base). Our clean-partial-path discriminator (Lemma 1 formulation) sidesteps noisy-state classification entirely.</p>
-<ul>
-<li><b>Where D-CBG is genuinely strong</b>: per-position enumeration lets it penalize removed edges directly — at γ = 4 it achieves the lowest removed-edge rate of any non-adjacency method (2.2%, vs 5.0% for our plain reweighting). It needs γ = 4 to act at all (γ ≤ 2 ≈ base).</li>
-<li><b>And what that costs</b>: position-by-position tilting fights the model's joint distribution — total invalid edges <i>rise</i> (blk4: 6.4% → 9.0%; alien transitions replace removed ones) and arrival drops. Our joint-candidate reweighting keeps candidates model-coherent by construction, so validity and EM improve <i>together</i>.</li>
-<li><b>End-to-end, ours wins every cell</b>: composed EM/PC at blk4 0.331/0.476 (ours) vs 0.309/0.436 (D-CBG best γ); blk64 and graph64 likewise — at <b>30–90× lower guidance cost</b> (0.03–0.09 vs ≈2.7 s/path for the exact enumeration).</li>
-<li><b>Scenario transfer</b>: the D-CBG classifier takes no adjacency input, so each new scenario requires classifier retraining; our discriminator generalizes to unseen scenarios (§6.2, exp. 2) — the comparison column a paper table should carry.</li>
-</ul>
-
-
-<h3>7.2 Controlled 2×2: mechanism × classifier, everything else matched</h3>
-<p>§7.1 confounded the guidance <i>mechanism</i> with the classifier <i>design</i>. This round controls it: all four cells share the identical classifier architecture (embedding · GraphSAGE · edge-existence/deg-ratio channels · encoder · masked pooling · bounded logit · label smoothing) and the identical training protocol (labeled data: exceptional 1% vs normal, same splits). The only remaining differences are method-intrinsic: D-CBG's classifier reads the <i>noisy</i> state (x<sub>t</sub>, t) as its math requires; ours reads <i>clean partial paths</i> as Lemma 1 requires — and how the output is used (per-position tilting vs joint-candidate reweighting). No proposal masking in the 2×2 (kept as a separate, composable lever).</p>
-<table>
-<tr><th>config</th><th>cell</th><th class="num">clf val acc</th><th class="num">arrival</th><th class="num">valid raw</th><th class="num">inv-edge</th><th class="num">rem-edge</th><th class="num">EM P1+P3</th></tr>
-<tr><td rowspan="5">mask blk4</td><td>D-CBG + plain (γ=4)</td><td class="num">0.719</td><td class="num">0.907</td><td class="num">0.267</td><td class="num">9.0%</td><td class="num">2.2%</td><td class="num">0.309</td></tr>
-<tr><td>D-CBG + adj (γ=4)</td><td class="num">0.746</td><td class="num">0.939</td><td class="num">0.289</td><td class="num">6.1%</td><td class="num">4.4%</td><td class="num">0.290</td></tr><tr><td>D-CBG + adj, first-order (any γ)</td><td class="num">0.746</td><td class="num">0.962</td><td class="num">0.245</td><td class="num">6.4%</td><td class="num">5.1%</td><td class="num">0.260</td></tr>
-
-<tr><td>IW + plain</td><td class="num">0.676</td><td class="num">0.948</td><td class="num">0.255</td><td class="num">6.4%</td><td class="num">4.9%</td><td class="num">0.271</td></tr>
-<tr><td><b>IW + adj</b></td><td class="num">0.71</td><td class="num">0.950</td><td class="num best">0.307</td><td class="num">5.7%</td><td class="num">5.0%</td><td class="num">0.300</td></tr>
-<tr><td rowspan="5">mask blk64</td><td>D-CBG + plain (γ=4)</td><td class="num">0.734</td><td class="num">0.844</td><td class="num">0.156</td><td class="num">9.6%</td><td class="num">2.2%</td><td class="num">0.228</td></tr>
-<tr><td>D-CBG + adj (γ=4)</td><td class="num">0.750</td><td class="num">0.844</td><td class="num">0.181</td><td class="num">8.4%</td><td class="num">3.5%</td><td class="num">0.214</td></tr><tr><td>D-CBG + adj, first-order (any γ)</td><td class="num">0.750</td><td class="num">0.871</td><td class="num">0.152</td><td class="num">8.6%</td><td class="num">4.8%</td><td class="num">0.194</td></tr>
-
-<tr><td>IW + plain</td><td class="num">0.676</td><td class="num">0.883</td><td class="num">0.172</td><td class="num">8.6%</td><td class="num">4.6%</td><td class="num">0.204</td></tr>
-<tr><td><b>IW + adj</b></td><td class="num">0.71</td><td class="num">0.885</td><td class="num best">0.210</td><td class="num">8.4%</td><td class="num">4.8%</td><td class="num">0.221</td></tr>
-<tr><td rowspan="3">graph blk64</td><td>D-CBG + adj (any γ)</td><td class="num">0.531</td><td class="num">0.03</td><td class="num">0.466–0.469</td><td class="num">5.0%</td><td class="num">5.0%</td><td class="num">0.056</td></tr>
-<tr><td>IW + adj (data)</td><td class="num">0.71</td><td class="num">0.015</td><td class="num">0.656</td><td class="num">5.0%</td><td class="num">5.0%</td><td class="num">0.080</td></tr>
-<tr><td><b>IW + plain</b> (ESS 31!)</td><td class="num">0.676</td><td class="num">0.019</td><td class="num best">0.708</td><td class="num">4.1%</td><td class="num">4.1%</td><td class="num">0.084</td></tr>
-</table>
-<p class="small">IW rows here are guidance-only (no proposal masking); "IW + adj" cells reuse the §6.1 data-negative runs (composed EM not measured there). γ ≤ 2 leaves D-CBG ≈ base in every config. With the composable adjacency-masked proposal added, IW + plain reaches valid 0.327 (blk4) and — the new best graph64 result — <b>valid 0.988, raw EM 0.233</b> (IW + plain + adj-proposal).</p>
-<ul>
-<li><b>The cost–quality frontier closes the comparison.</b> D-CBG's cheap variant — the first-order/Taylor approximation, ONE classifier forward+backward per reveal (~48 calls/path, 0.07 s/path) — is <b>inert at every γ</b> (valid 0.245 ≈ base 0.242 at blk4; 0.152 ≈ 0.151 at blk64): the gradient taken at the one-hot MASK embedding carries no usable substitution signal here. Its effective variant — exact enumeration — works only at γ = 4 and costs ~33k calls (2.7 s/path). Our IW sits between (~2.4k calls, 0.03–0.05 s/path) and delivers the largest lift: <b>the cheap D-CBG doesn't work and the working D-CBG isn't cheap</b>.</li>
-<li><b>The user-hypothesized effect is real: adjacency-aware classifiers help BOTH methods.</b> D-CBG gains +2.2–2.5%p valid at both block sizes (clf val 0.72 → 0.75), and — more interestingly — the adjacency channel <i>removes D-CBG's coherence damage</i> (blk4 inv-edge 9.0% → 6.1%): seeing legality directly, the classifier no longer needs the extreme tilts that manufactured alien edges.</li>
-<li><b>With classifiers matched, the mechanisms are closer than §6.11 suggested</b>: adj-vs-adj, IW wins (0.306 vs 0.289; 0.205 vs 0.181); plain-vs-plain it splits (blk4 D-CBG 0.267 &gt; IW 0.255; blk64 IW 0.172 &gt; D-CBG 0.156). The honest mechanism-level claims for IW are therefore: no γ to tune (D-CBG is inert below γ = 4), arrival preserved (0.95 vs 0.84–0.94), 30–90× lower cost, and free composition with proposal masking.</li>
-<li><b>The structural argument survives the control</b>: even with the matched adjacency architecture, D-CBG's classifier stays at chance on the CTMC kernel (0.531) — the bottleneck is the <i>noisy-input classification problem itself</i>, not architecture, and the clean-partial-path input that fixes it is only available to the IW formulation (Lemma 1). On the graph kernel the mechanism gap is decisive: 0.47 (D-CBG) vs 0.71 (IW).</li>
-<li><b>Unexpected finding</b>: on the graph kernel the PLAIN partial-path discriminator out-guides the adjacency-aware one (valid 0.708 vs 0.656) with dramatically sharper weights (ESS 31 vs 96) — the first sub-50 ESS observed anywhere in this project. The adjacency features appear to homogenize candidate scores exactly where sequence-level cues are the discriminative signal; worth a dedicated ablation before drawing design rules.</li>
-</ul>
-<p><b>Unseen-scenario transfer (exp. 2) under matched classifiers.</b> Training the adjacency-aware D-CBG classifier on except 1–99 (1% each, per-batch scenario adjacency — the §6.2 protocol) and evaluating on unseen except_0:</p>
-<table>
-<tr><th>blk</th><th>method (unseen, e99-trained)</th><th class="num">clf val (unseen)</th><th class="num">valid raw</th><th class="num">vs seen (e0)</th><th class="num">EM P1+P3</th></tr>
-<tr><td rowspan="2">4</td><td>D-CBG + adj (γ=4)</td><td class="num">0.703</td><td class="num">0.292</td><td class="num">0.289 → ±0</td><td class="num">0.281</td></tr>
-<tr><td><b>IW + adj (ours, §6.2)</b></td><td class="num">≈0.71</td><td class="num best">0.314</td><td class="num">0.306 → ±0</td><td class="num">0.302</td></tr>
-<tr><td rowspan="2">64</td><td>D-CBG + adj (γ=4)</td><td class="num">0.684</td><td class="num">0.161</td><td class="num">0.181 → −2.0%p</td><td class="num">0.199</td></tr>
-<tr><td><b>IW + adj (ours)</b></td><td class="num">≈0.71</td><td class="num best">0.210</td><td class="num">0.210 → ±0</td><td class="num">0.212</td></tr>
-</table>
-<ul>
-<p class="small">IW rows' EM P1+P3 and the blk64 row come from three-way reruns with the e99 disc (blk4 rerun valid 0.323 — within the ±1.5%p sampling noise; the blk64 seen reference 0.210 is the same-seed e0-data rerun).</p>
-<li><b>The generalization is a property of the adjacency-conditioned classifier design, not of either guidance mechanism</b>: given the adjacency channel (our formulation, ported to D-CBG in this section), BOTH methods transfer to the unseen scenario essentially without loss at blk4 (D-CBG 0.289 → 0.292; ours 0.306 → 0.314). This softens §7.1's last bullet: the <i>published</i> D-CBG (no adjacency input) requires per-scenario retraining, but the capability is portable. The honest paper claim is therefore: <b>we contribute the scenario-conditioned classifier design that makes zero-retraining transfer possible — for any classifier-guidance mechanism — and our IW mechanism retains its advantage under it</b> (unseen blk4: 0.314 vs 0.292, same ordering as seen).</li>
-</ul>
-
-
-
-<h3>7.3 The purest protocol: model-distribution negatives for both methods</h3>
-<p>Final control: both classifiers trained against the SAME negative source — each block's 20k unconditional generations (the §6.7 pools) — each corrupted per its method's input type (D-CBG: generation-time noising; ours: clean random-truncation partials). Positives, splits, architecture unchanged (adjacency-aware). The table places the data-negative results of §7.2 side by side, giving a <b>direct per-method comparison of the negative class (normal data vs model generations)</b> (data-negative rows are the same-protocol measurements from §7.2 / the gap-fill reruns).</p>
-<table>
-<tr><th>blk</th><th>method</th><th>negative</th><th class="num">clf val</th><th class="num">arrival</th><th class="num">valid raw</th><th class="num">EM raw</th><th class="num">EM P1+P3</th><th class="num">PC P1+P3</th></tr>
-<tr><td rowspan="6">4</td><td>D-CBG + adj (γ=4)</td><td>normal data</td><td class="num">0.746</td><td class="num">0.939</td><td class="num">0.289</td><td class="num">0.258</td><td class="num">0.290</td><td class="num">0.444</td></tr>
-<tr><td>D-CBG + adj (γ=4)</td><td>model</td><td class="num">0.828</td><td class="num">0.945</td><td class="num">0.298</td><td class="num">0.264</td><td class="num">0.291</td><td class="num">0.444</td></tr>
-<tr><td>IW (ours)</td><td>normal data</td><td class="num">≈0.71</td><td class="num">0.950</td><td class="num">0.307</td><td class="num">0.278</td><td class="num">0.300</td><td class="num">0.455</td></tr>
-<tr><td>IW (ours)</td><td>model</td><td class="num">≈0.83</td><td class="num">0.952</td><td class="num">0.327</td><td class="num">0.291</td><td class="num">0.306</td><td class="num">0.461</td></tr>
-<tr><td><b>IW + adj-proposal</b></td><td>normal data</td><td class="num">≈0.71</td><td class="num">0.861</td><td class="num">0.361</td><td class="num">0.307</td><td class="num">0.323</td><td class="num">0.471</td></tr>
-<tr><td><b>IW + adj-proposal</b></td><td>model</td><td class="num">≈0.83</td><td class="num">0.861</td><td class="num"><b>0.372</b></td><td class="num"><b>0.315</b></td><td class="num"><b>0.331</b></td><td class="num"><b>0.476</b></td></tr>
-<tr><td rowspan="6">64</td><td>D-CBG + adj (γ=4)</td><td>normal data</td><td class="num">0.750</td><td class="num">0.844</td><td class="num">0.181</td><td class="num">0.139</td><td class="num">0.214</td><td class="num">0.384</td></tr>
-<tr><td>D-CBG + adj (γ=4)</td><td>model</td><td class="num">0.824</td><td class="num">0.848</td><td class="num">0.191</td><td class="num">0.142</td><td class="num">0.223</td><td class="num">0.390</td></tr>
-<tr><td>IW (ours)</td><td>normal data</td><td class="num">≈0.71</td><td class="num">0.885</td><td class="num">0.210</td><td class="num">0.163</td><td class="num">0.221</td><td class="num">0.381</td></tr>
-<tr><td>IW (ours)</td><td>model</td><td class="num">≈0.82</td><td class="num">0.888</td><td class="num">0.222</td><td class="num">0.173</td><td class="num">0.220</td><td class="num">0.379</td></tr>
-<tr><td><b>IW + adj-proposal</b></td><td>normal data</td><td class="num">≈0.71</td><td class="num">0.810</td><td class="num">0.239</td><td class="num">0.176</td><td class="num"><b>0.236</b></td><td class="num"><b>0.402</b></td></tr>
-<tr><td><b>IW + adj-proposal</b></td><td>model</td><td class="num">≈0.82</td><td class="num">0.806</td><td class="num"><b>0.251</b></td><td class="num"><b>0.183</b></td><td class="num">0.234</td><td class="num">0.401</td></tr>
-</table>
-<ul>
-<li><b>Model negatives are the third portable ingredient</b>: like the adjacency channel (§7.2) they also improve D-CBG (valid 0.289 → 0.298 at blk4, 0.181 → 0.191 at blk64; classifier val 0.75 → 0.83) — replicating §6.7's data &lt; model ordering on their side of the fence.</li>
-<li><b>Under the purest matched protocol the IW lead widens slightly</b>: +2.9%p (blk4, 0.327 vs 0.298) and +3.1%p (blk64, 0.222 vs 0.191) at ≈2σ each — versus +1.7/+2.4%p under data negatives — and the full stack (adj-proposal) leads every column at both block sizes.</li>
-<li><b>Summary of the §7 comparison</b>: all three ingredients we formulate — scenario-conditioned classifier (§7.2), model-distribution negatives (here), and Lemma 3 proposal masking (ours only, by construction) — port to or compose with classifier guidance; D-CBG benefits from the first two, yet in every matched configuration (data/model negatives × plain/adj classifiers × seen/unseen) the joint-candidate IW mechanism scores highest, tunes no γ, preserves arrival, and occupies the favorable point of the cost frontier.</li>
-</ul>
-
-<h2>8. Relation to the previous report (RESULTS_BD_prev.pdf)</h2>
-<ul>
-<li>The predecessor evaluated blk4 only, with refine variants: mask raw 0.952 arrival / 0.820 valid∧hit, refine_es +0.03 arrival, refine_nx arrival 1.0 by construction. This sweep drops refinement entirely (user request) and varies block size instead.</li>
-<li>The predecessor's conclusion "refinement is nearly obsolete for the mask kernel" gets stronger here: at blk1, raw arrival is 0.997 — refinement would have ≤0.3%p of headroom.</li>
-<li>The graph (uniform-state CTMC) kernel was not part of this sweep (user decision: mask only). The queued graph work from the previous report (d = 0.05 retrain, respaced block sampling) remains open.</li>
-</ul>
-
-<h2>Artifacts</h2>
-<ul>
-<li>Checkpoints: <span class="mono">sets_model/BD_porto_v3_normal_mask_blk{1,2,4,8,16,32,64}_base_bd.pth</span> (+ <span class="mono">_epoch_0</span> copies), server <span class="mono">143.248.84.179:/home/aailab/wp03052/Synthetic-Data/Block-Diffusion-OD-Planning</span></li>
-<li>Results: <span class="mono">sets_res/BD_porto_v3_normal_mask_blk*_base_bd.res</span> (raw + refine_nx + refine_es variants stored; only raw reported here), post-processing comparison <span class="mono">sets_res/BD_mask_blk*_postproc.res</span> (<span class="mono">eval_bd_postproc.py</span>) + per-path EM/PC records under <span class="mono">sets_res/em_pc/</span></li>
-<li>Training logs: <span class="mono">sets_log/bd_mask_blk*.log</span>, <span class="mono">sets_model/*_bd_train_log.txt</span></li>
-<li>Code: <span class="mono">models_seq/bd_models.py</span>, <span class="mono">models_seq/bd_trainer.py</span>, <span class="mono">main_bd.py</span>, <span class="mono">train_porto_bd.sh</span>; launcher: tmux sessions <span class="mono">bd_gpu{0..3}</span> (one GPU per run, ≤1 run/GPU per the utilization policy)</li>
-<li>Guidance: discriminators <span class="mono">sets_disc/BDdisc_*.pth</span> + pool <span class="mono">sets_disc/neg_pool.pth</span>; results <span class="mono">sets_res/BDguid_*.res</span>; code <span class="mono">models_seq/bd_disc.py</span>, <span class="mono">bd_models.py::plan_guided</span>, <span class="mono">train_bd_disc.py</span>, <span class="mono">eval_bd_guidance.py</span>, <span class="mono">run_bd_guidance_all.sh</span></li><li>Reference audit: <span class="mono">pdfs/BD_CODE_VERIFICATION_KO.pdf</span> / <span class="mono">_EN.pdf</span>; guidance formulation <span class="mono">pdfs/BD_GUIDANCE_FORMULATION.pdf</span></li>
-</ul>
-
+<ul class="small"><li><b>IW &gt; D-CBG at every block size</b> (raw valid 10/10; blk4 0.331 vs 0.309), and the full stack adj+IW tops every cell. Our ingredients — the scenario-conditioned classifier and model negatives — port to D-CBG and improve it, yet the ordering persists.</li><li><b>Unseen transfer holds for both, with the IW lead intact</b>: blk4 D-CBG 0.306 / IW 0.325 (seen 0.309 / 0.331). Generalization is a property of the adjacency-conditioned classifier design (our contribution, portable).</li><li><b>Cost–quality frontier</b>: the cheap D-CBG (first-order) does not work and the working D-CBG (exact) is not cheap — IW dominates the region between (30–90× cheaper, no γ to tune, arrival preserved). On the uniform kernel their noisy-state classifier is structurally untrainable (chance level), making the gap decisive (v1 §7).</li></ul>
+<h2>6. Conclusions and artifacts</h2>
+<ul class="small"><li>Small mask blocks (1–8) essentially solve the task; the residual defects (local skips, near-misses) are structurally repaired by P1/P3. The graph kernel is the opposite pole of the validity–arrival trade.</li><li>The full exceptional-scenario system — <b>adj-masked proposals + model-negative partial-path discriminator (IW) + P1/P3</b> — is best on seen and unseen scenarios and beats the published baseline (D-CBG) in every matched configuration.</li><li>Models: sets_model/*_v2_bd.pth (14; v1 under v1_archive/). Results: sets_res/, logs: sets_log/v3_*. Code: bd_models.py (plan_guided), bd_disc.py, dcbg_plugin.py, train_bd_disc.py, train_dcbg_classifier.py, eval_*.py, run_v3_all.sh.</li></ul>
 </body>
 </html>

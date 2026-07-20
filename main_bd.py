@@ -195,9 +195,13 @@ if __name__ == "__main__":
     print(device)
 
     date = "20190701" if "dj" in args.d_name else "dj"
+    # shuffle=False: keep file order deterministic so TrainerBD's seeded
+    # random_split has REPRODUCIBLE train/test membership (the DataLoader
+    # still shuffles batches). Enables true held-out evaluation (v2 runs).
     dataset = TrajFastShortestDataset(
         args.d_name, [date], args.path, device, is_pretrain=True,
         index=args.shortest_org_idx, shortest_data_path=args.shortest_data_path,
+        shuffle=False,
     )
     n_vertex = dataset.n_vertex
     print(f"vertex: {n_vertex}")
