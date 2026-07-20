@@ -161,7 +161,10 @@ if __name__ == "__main__":
     if args.neg == "model":
         import re as _re
         m = _re.search(r"blk(\d+)", args.pool)
+        g = _re.search(r"graph(\d+)", args.pool)
         if m:
             name += f"_blk{m.group(1)}"
+        elif g:
+            name += f"_graph{g.group(1)}"
     torch.save(disc, join(args.out, f"{name}.pth"))
     print(f"saved {join(args.out, f'{name}.pth')}")

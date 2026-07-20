@@ -478,3 +478,18 @@ class BDDiscriminatorPlain(BDDiscriminator):
         z = self.head(pooled).squeeze(-1)
         lb = self.logit_bound
         return lb * torch.tanh(z / lb)
+
+
+class PlaceboDisc(nn.Module):
+    """Cheating-audit control: outputs a constant logit -> uniform importance
+    weights. plan_guided with this disc isolates everything EXCEPT the
+    discriminator signal (candidate averaging, masking, sampling plumbing)."""
+
+    def __init__(self, n_vertex=1390):
+        super().__init__()
+        self.PAD = n_vertex
+        self.n_vertex = n_vertex
+        self.dummy = nn.Parameter(torch.zeros(1))
+
+    def forward(self, tokens, lengths, adj, deg_ratio):
+        return torch.zeros(tokens.shape[0], device=tokens.device)
