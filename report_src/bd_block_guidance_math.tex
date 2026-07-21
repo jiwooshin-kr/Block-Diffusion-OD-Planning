@@ -1,0 +1,260 @@
+\documentclass[11pt]{article}
+
+% ---- xelatex + Korean ----
+\usepackage{kotex}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=blue!55!black,urlcolor=teal]{hyperref}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\xpre}{x^{<b}}        % prefix (revealed prior blocks)
+\newcommand{\xblk}{x^{b}}         % current block
+\newcommand{\xz}{x_0}
+\newcommand{\pth}{p_\theta}
+\newcommand{\Dphi}{D_\phi}
+\newcommand{\Qb}{\bar{Q}}
+\newcommand{\xbar}{\bar{x}}
+\DeclareMathOperator{\Cat}{Cat}
+\DeclareMathOperator{\supp}{supp}
+\DeclarePairedDelimiter{\norm}{\lVert}{\rVert}
+
+\theoremstyle{plain}
+\newtheorem{lemma}{Lemma}
+\theoremstyle{definition}
+\newtheorem{remark}{Remark}
+
+\title{\bfseries Block Diffusion 에서의 Discriminator Importance-Weight Guidance\\[2pt]
+\large 판별자의 조건부 형태와 유도(guidance) 수식 정식화}
+\author{Block-Diffusion-OD-Planning \quad (v2 backbones)}
+\date{2026-07-21}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+본 문서는 (i) block diffusion 상황에서 discriminator 가 \emph{무엇을 조건으로 보는지}
+—현재 블록만 보는가, 아니면 이전 블록(prefix)까지 보는가— 를 수식으로 규정하고,
+(ii) 그에 기반한 importance-weight guidance 를 두 커널(mask 흡수 커널,
+graph 균일 CTMC 커널)에 대해 모두 수식으로 명시한다.
+각 수식에는 실제 구현 위치(\code{models\_seq/bd\_models.py},
+\code{models\_seq/bd\_disc.py})를 병기한다. 핵심 결론은:
+\textbf{판별자는 블록 단독이 아니라 clean partial path
+$[\,\xpre \,\Vert\, \xblk_0\,]$(이전 블록 전체 + 현재 블록)를 입력으로 받아야 하며}
+(Lemma~\ref{lem:partial}),
+블록만 보는 판별자는 편향된다(Lemma~\ref{lem:blockonly}).
+\end{abstract}
+
+% =====================================================================
+\section{표기와 Block Diffusion 세팅}
+% =====================================================================
+
+경로를 canvas 형태 $x=[x^1,\dots,x^{K}]$ 로 두고, 위치들을 크기 $B$ 의 블록
+$x^1,\dots,x^{N_B}$ 로 나눈다($B=\code{block\_size}$). 한 블록 $b$ 를 디노이징할 때:
+\begin{itemize}[nosep,leftmargin=1.4em]
+  \item $\xpre$ : 이미 복원(reveal)된 \emph{이전 블록 전체} (clean prefix).
+  \item $\xblk_t$ : 현재 블록의 시각 $t$ latent, $\xblk_0$ : 그 clean 값.
+  \item 디노이저 $\pth(\xblk_0\mid \xblk_t,\xpre)$ 는 \emph{offset-block-causal} attention
+        (M\textsubscript{OBC})을 통해 prefix $\xpre$ 를 조건으로 받는다
+        — 이것이 이전 블록 정보가 모델에 들어가는 유일한 경로이다.
+\end{itemize}
+
+두 within-block 커널:
+\begin{align}
+\text{(mask)}\quad & \text{흡수(absorbing) 상태 [MASK] 로의 독립 전이, SUBS 파라미터화, first-hitting 복원};\\
+\text{(graph)}\quad & Q_t=\exp\!\big((A-D)\,\beta_t\big),\quad
+\Qb_t=\textstyle\prod_{i\le t}Q_i,\quad \text{균일분포를 극한분포로 갖는 D3PM CTMC}.
+\end{align}
+
+% =====================================================================
+\section{블록 조건부 목표분포와 밀도비}
+% =====================================================================
+
+Guidance 의 목표는 모델 역과정 $\pth$ 대신 \emph{데이터} 역과정 $q$ 에서 블록을 복원하는 것이다.
+블록 $b$ 의 한 역스텝은
+\begin{align}
+q(\xblk_{t-1}\mid \xblk_t,\xpre)
+ &= \sum_{\xblk_0} q(\xblk_{t-1}\mid \xblk_t,\xblk_0)\; q(\xblk_0\mid \xblk_t,\xpre)
+ \label{eq:target}\\
+ &= \mathbb{E}_{\xblk_0\sim \pth(\cdot\mid \xblk_t,\xpre)}
+      \!\left[\, w\big(\xblk_0\big)\; q(\xblk_{t-1}\mid \xblk_t,\xblk_0)\right]\big/
+      \mathbb{E}\!\left[w\right],
+ \label{eq:sn}
+\end{align}
+여기서 후보별 importance weight 는 \emph{블록 조건부} 밀도비
+\begin{equation}
+w(\xblk_0)\;=\;\frac{q(\xblk_0\mid \xpre)}{\pth(\xblk_0\mid \xpre)}
+\;\approx\;\frac{\Dphi}{1-\Dphi}\Big([\,\xpre \Vert \xblk_0\,]\Big).
+\label{eq:w}
+\end{equation}
+식~\eqref{eq:sn} 는 self-normalized importance sampling 이며, $\xblk_t$ 에만 의존하는
+후보-공통 인수는 정규화에서 소거된다(아래 Lemma~\ref{lem:partial}).
+
+% =====================================================================
+\section{판별자는 무엇을 조건으로 보는가: prefix $\Vert$ block}
+% =====================================================================
+
+\begin{lemma}[Clean partial-path 판별자로 충분하다]\label{lem:partial}
+판별자를 \emph{부분 경로} $[\,\xpre\Vert\xblk_0\,]$(prefix + 현재 clean 블록)에서
+``실제 데이터 vs 모델 표본''으로 학습하면 그 밀도비는
+\begin{equation}
+r\big(\xpre\Vert\xblk_0\big)\;=\;\frac{q(\xpre,\xblk_0)}{\pth(\xpre,\xblk_0)}
+\;=\;\frac{\Dphi}{1-\Dphi}.
+\end{equation}
+우리가 필요한 블록 조건부 가중치~\eqref{eq:w} 는
+\begin{equation}
+w(\xblk_0)=\frac{q(\xblk_0\mid\xpre)}{\pth(\xblk_0\mid\xpre)}
+=\underbrace{\frac{q(\xpre,\xblk_0)}{\pth(\xpre,\xblk_0)}}_{=\,r}\cdot
+\underbrace{\frac{\pth(\xpre)}{q(\xpre)}}_{=\,C^{-1}}
+= C^{-1}\, r\big(\xpre\Vert\xblk_0\big),
+\label{eq:lemma1}
+\end{equation}
+이고 $C=q(\xpre)/\pth(\xpre)$ 는 \emph{prefix 에만} 의존하여 블록 $b$ 안의 모든 후보
+$\xblk_0$ 에 대해 상수이다. 따라서 self-normalized 가중치
+$w_n/\sum_m w_m = r_n/\sum_m r_m$ 에서 $C^{-1}$ 이 소거되어,
+\textbf{joint partial-path 비율 $r=\Dphi/(1-\Dphi)$ 를 그대로 써도 결과가 동일하다.}
+\end{lemma}
+
+\begin{lemma}[블록만 보는 판별자는 편향된다]\label{lem:blockonly}
+입력을 현재 블록 $\xblk_0$ 만으로 제한한 판별자는 \emph{주변} 밀도비
+$q(\xblk_0)/\pth(\xblk_0)$ 를 학습한다. 이는 목표~\eqref{eq:w} 와
+\begin{equation}
+\frac{q(\xblk_0\mid\xpre)}{\pth(\xblk_0\mid\xpre)}
+\;=\;\frac{q(\xblk_0)}{\pth(\xblk_0)}\cdot
+\frac{q(\xpre\mid\xblk_0)/q(\xpre)}{\pth(\xpre\mid\xblk_0)/\pth(\xpre)}
+\end{equation}
+만큼 다르며, 두 번째 인수는 \emph{후보 $\xblk_0$ 에 따라 변하므로} 상수처럼 소거되지 않는다.
+즉 블록만 보는 판별자는 prefix 와의 정합(연결성·방향)을 무시하는 편향된 가중치를 준다.
+\end{lemma}
+
+\begin{remark}[구현]
+판별자 \code{BDDiscriminator.forward} (\code{bd\_disc.py:119})는 canvas 형태
+부분 경로 \code{tokens=[dst, ori, v1, \dots, vj]} 를 \code{lengths} 로 잘라 입력받는다
+(주석: \emph{``canvas-form partial paths''}, \code{bd\_disc.py:121}).
+학습 표본은 \code{make\_partial} (\code{bd\_disc.py:163})이 한 경로에서
+길이 $j\sim \mathcal{U}\{2,\dots,L\}$ 로 \emph{무작위 절단}하여 만든다 — 즉 모든 길이의
+prefix 에 대해 점수를 학습한다. 따라서 구현은 Lemma~\ref{lem:partial} 의
+partial-path 판별자이며, Lemma~\ref{lem:blockonly} 의 block-only 는 아니다.
+Guidance 시점에도 점수는 \emph{prefix+현재 후보 블록} 전체에 매겨진다:
+\code{full[:,:,-block:]=cand}; \code{disc(x\_disc,\dots)} (\code{bd\_models.py:978--993}).
+\end{remark}
+
+\begin{lemma}[가변 길이 절단의 잔여 편향]\label{lem:trunc}
+판별자를 무작위 절단 길이 $j\sim\mathcal U\{2,\dots,L\}$(커널 $\kappa(\ell\mid L)=\tfrac{1}{L-1}$,
+\code{bd\_disc.py:163})로 학습하면, 길이 $\ell$ 인 부분 경로 $y$ 에 대해 최적 판별자는
+\begin{equation}
+\frac{\Dphi}{1-\Dphi}(y)
+=\underbrace{\frac{q(y)}{\pth(y)}}_{\text{원하는 prefix 주변비}}
+\cdot\underbrace{\frac{\Pr_q(\mathrm{len}{=}\ell)}{\Pr_{\pth}(\mathrm{len}{=}\ell)}}_{(\star)}
+\cdot\underbrace{\frac{\mathbb E_{z\sim q(\cdot\mid y)}[\kappa(\ell\mid \ell+|z|)]}
+{\mathbb E_{z\sim \pth(\cdot\mid y)}[\kappa(\ell\mid \ell+|z|)]}}_{(\star\star)}
+\end{equation}
+을 추정한다($x=y\cdot z$, $z$=continuation). 한 블록의 모든 후보는 같은 길이 $\ell$ 로 질의되므로
+$(\star)$ 는 후보-공통이고 $C$ 와 함께 self-normalization 에서 소거된다.
+$(\star\star)$ 만 후보마다 다를 수 있는데, 이는 prefix $y$ 를 잇는 실제/모델 continuation 의
+\emph{남은 길이 분포} 차이에서 온다. 고정 목적지 최단경로에서는 후보들이 인접 정점에서 끝나
+dst 까지 남은 hop 분포가 유사하므로 $(\star\star)\approx$ 후보-공통 $\Rightarrow$ 잔여 편향 미미.
+\emph{정확한 불편화}: 질의 길이로 절단을 고정하거나 표본을 $1/\kappa$ 로 재가중하면 $(\star\star)$ 가 소멸한다.
+\end{lemma}
+
+\noindent 요컨대 \textbf{prefix 포함은 Lemma~\ref{lem:partial}--\ref{lem:blockonly} 로 필수·정확},
+남는 것은 Lemma~\ref{lem:trunc} 의 절단 재가중 $(\star\star)$ 뿐이며 본 세팅에서 무시 가능하다.
+
+\paragraph{판별자 구조(요약).} $\Dphi$ 는 (a) 시나리오 그래프 $A_\mathrm{scn}$ 위의
+GraphSAGE 로 얻은 정점 임베딩, (b) 위치별 전이 피처
+$[\,\text{edge-exists},\ \text{is-transition},\ \text{deg-ratio}\,]$
+(\code{bd\_disc.py:136--146}; edge-existence 채널이 폐쇄된 edge 신호를 직접 노출하여
+미학습 시나리오로 일반화), (c) 2-layer transformer + masked mean pooling
+(\code{bd\_disc.py:152--154}), (d) bounded logit head 를 거친다:
+\begin{equation}
+\ell_\phi(x)=\lambda\,\tanh\!\big(z(x)/\lambda\big),\qquad
+\frac{\Dphi}{1-\Dphi}=e^{\ell_\phi}\in\big[e^{-\lambda},e^{\lambda}\big],\quad \lambda=4
+\quad(\code{bd\_disc.py:156}).
+\end{equation}
+
+% =====================================================================
+\section{Guidance 수식 — 두 커널}
+% =====================================================================
+
+두 커널 공통으로, 매 역스텝에서 $N$ 개의 mean-field 후보를 뽑아
+가중 평균 $\xbar^b_0$ 를 만들고 이를 posterior 에 대입한다.
+$\{x^{b,(n)}_0\}_{n=1}^N \sim \pth(\cdot\mid\xblk_t,\xpre)$,
+\begin{equation}
+w_n=\exp\!\big(\gamma\,\ell_\phi([\,\xpre\Vert x^{b,(n)}_0\,])\big),\qquad
+\bar{x}^{b}_{0}{}^{\,l}(k)=\frac{\sum_{n} \mathbf{1}\{x^{b,(n),l}_0=k\}\,w_n}{\sum_{n} w_n}
+\quad(\code{bd\_models.py:1003--1011,\ 1092--1099}).
+\label{eq:xbar}
+\end{equation}
+($\gamma=$\code{w\_gamma} 는 tempering; $\gamma=1$ 이면 논문 수식과 정확히 일치.)
+
+\subsection{Mask (흡수) 커널 — first-hitting}
+디노이저는 SUBS: $\hat{x}^{b}_0=\mathrm{softmax}$ 로 각 마스크 위치의 정점분포를 준다.
+매 reveal 에서 후보~\eqref{eq:xbar} 로 $\xbar^b_0$ 를 만들고,
+균일하게 고른 마스크 위치 하나를 $\xbar^b_0$ 에서 샘플하여 확정한다:
+\begin{equation}
+\ell^\star\sim \mathcal{U}(\text{masked positions}),\qquad
+x^{b}_{0}{}^{\ell^\star}\sim \Cat\!\big(\xbar^{b}_{0}{}^{\,\ell^\star}\big)
+\quad(\code{bd\_models.py:1013--1023}).
+\end{equation}
+
+\subsection{Graph (균일 CTMC) 커널 — D3PM posterior}
+D3PM 역 posterior 에 clean 블록 대신 재가중 평균 $\xbar^b_0$ 를 대입한다:
+\begin{equation}
+p(\xblk_{t-1}\mid \xblk_t,\xpre)\;=\;
+\Cat\!\Big(\xblk_{t-1};\ \ p \propto\ \xblk_t\,Q_t^{\top}\ \odot\ \xbar^{b}_0\,\Qb_{t-1}\Big)
+\quad(\code{bd\_models.py:1103--1111}).
+\label{eq:graphpost}
+\end{equation}
+구현에서 \code{EtXt}$=\xblk_t Q_t^\top$ (\code{bd\_models.py:1105}),
+\code{Em1}$=\xbar^b_0\,\Qb_{t-1}$ (\code{:1106}), 곱 후 정규화(\code{:1107--1109}).
+이는 논문 Eq.~(21)/(14) 와 정확히 일치한다.
+
+\subsection{Self-normalized 추정과 ESS}
+식~\eqref{eq:sn},\eqref{eq:xbar} 의 추정 품질은 Kish effective sample size 로 진단한다:
+\begin{equation}
+\mathrm{ESS}=\frac{\big(\sum_{n} w_n\big)^2}{\sum_{n} w_n^2}
+=\frac{1}{\sum_n \tilde{w}_n^{2}}\in[1,N],\qquad \tilde{w}_n=\frac{w_n}{\sum_m w_m}
+\quad(\code{bd\_models.py:1000,\ 1089}).
+\end{equation}
+$\mathrm{ESS}\!\to\!N$ = 가중치 균등 = 판별자가 후보를 구분 못 함(guidance 무력);
+$\mathrm{ESS}\!\to\!1$ = 소수 후보 집중(guidance 강함, 분산 위험).
+
+\subsection{Adjacency-masked proposal (Lemma 3)}
+\begin{lemma}[인접성 마스킹은 불편(unbiased) 분산감소]\label{lem:adj}
+후보 제안을 ``이미 복원된 이웃 기준 $A_\mathrm{scn}$-합법 전이''로 제한하면,
+제외된 후보는 $q$ 의 지지집합 밖($w=0$)이고, 위치별 정규화상수 $Z_\ell$ 은
+후보-공통이라 소거된다. 따라서 목표분포~\eqref{eq:target} 는 불변이며 분산만 감소한다.
+\end{lemma}
+\noindent 구현: \code{plan\_guided(\dots, adj\_prop=True)},
+graph 최종 디코드의 시나리오 인접성 사용(\code{bd\_models.py:1113--1121}).
+
+% =====================================================================
+\section{수식 $\leftrightarrow$ 코드 대응표}
+% =====================================================================
+\begin{center}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}p{0.46\linewidth} l@{}}
+\toprule
+\textbf{수식} & \textbf{코드 위치 (\code{models\_seq/})}\\
+\midrule
+디노이저 $\pth(\xblk_0\mid\xblk_t,\xpre)$ (prefix=M\textsubscript{OBC}) & \code{bd\_models.py:\_cfg\_logits / attn} \\
+후보 $x^{b,(n)}_0\sim\pth$ & \code{bd\_models.py:971,\ 1068} \\
+판별자 점수 $[\,\xpre\Vert x^{b,(n)}_0\,]$ & \code{bd\_models.py:978--993,\ 1071--1085} \\
+$w_n=\exp(\gamma\,\ell_\phi)$, $\ell_\phi=\lambda\tanh(z/\lambda)$ & \code{bd\_models.py:997--998,\ 1086--1087}; \code{bd\_disc.py:156} \\
+재가중 평균 $\xbar^b_0$~\eqref{eq:xbar} & \code{bd\_models.py:1003--1011,\ 1092--1099} \\
+mask reveal & \code{bd\_models.py:1013--1023} \\
+graph D3PM posterior~\eqref{eq:graphpost} & \code{bd\_models.py:1103--1111} \\
+ESS $(\sum w)^2/\sum w^2$ & \code{bd\_models.py:1000,\ 1089} \\
+partial-path 판별자 입력 (Lemma~\ref{lem:partial}) & \code{bd\_disc.py:119--157} \\
+무작위 절단 학습표본 & \code{bd\_disc.py:163--168} \\
+adj-masked proposal (Lemma~\ref{lem:adj}) & \code{bd\_models.py:1113--1121} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
