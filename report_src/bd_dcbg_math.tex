@@ -1,0 +1,212 @@
+\documentclass[11pt]{article}
+
+% ---- xelatex + Korean ----
+\usepackage{kotex}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=blue!55!black,urlcolor=teal]{hyperref}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\xpre}{x^{<b}}
+\newcommand{\xblk}{x^{b}}
+\newcommand{\pth}{p_\theta}
+\newcommand{\pphi}{p_\phi}
+\newcommand{\Qb}{\bar{Q}}
+\DeclareMathOperator{\Cat}{Cat}
+\DeclareMathOperator{\softmax}{softmax}
+
+\theoremstyle{plain}
+\newtheorem{lemma}{Lemma}
+\theoremstyle{definition}
+\newtheorem{remark}{Remark}
+
+\title{\bfseries Block Diffusion 에서의 D-CBG (Discrete Classifier-Based Guidance)\\[2pt]
+\large Schiff et al. 분류기 가이던스의 블록 확산 정식화}
+\author{Block-Diffusion-OD-Planning \quad (v2 backbones) \quad — 자매 문서: \code{BD\_BLOCK\_GUIDANCE\_MATH.pdf}}
+\date{2026-07-21}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+본 문서는 Schiff et al. 의 \textbf{D-CBG}(discrete classifier-based guidance)를
+block diffusion 상황에서 수식으로 정리한다.
+IW guidance(\code{BD\_BLOCK\_GUIDANCE\_MATH.pdf})와의 핵심 차이는 두 가지다:
+(i) 분류기가 \textbf{clean 부분 경로가 아니라 시각 $t$ 의 \emph{노이즈 상태} $x_t$ 를 조건으로}
+받으며 시간 $t$ 로 조건화된다는 점, (ii) guidance 가 후보 재가중(importance sampling)이
+아니라 \textbf{역과정 posterior 를 위치별로 직접 tilting} 한다는 점이다.
+두 계산 변형—\emph{exact enumeration}과 \emph{first-order (Taylor)}—를 두 커널(mask, graph)에
+대해 각각 수식화하고 실제 구현(\code{dcbg\_plugin.py})의 라인을 병기한다.
+plug-in 이식(그들 코드 로직 그대로)이며, 분류기 아키텍처·학습 데이터는 IW disc 와
+통제되어 남는 차이가 \emph{방법 내재적}임을 명확히 한다.
+\end{abstract}
+
+% =====================================================================
+\section{표기와 D-CBG 목표}
+% =====================================================================
+자매 문서와 동일한 block-diffusion 세팅을 쓴다: canvas 를 크기 $B$ 블록으로 나누고,
+블록 $b$ 를 디노이징할 때 이전 블록 $\xpre$ 는 확정(commit), 현재 블록 $\xblk_t$ 는
+시각 $t$ 의 latent 이다. 조건 변수 $y\in\{\text{normal},\text{exceptional}\}$ 에 대해
+D-CBG 는 \emph{조건부 역과정}에서 샘플하려 한다:
+\begin{equation}
+p(\xblk_{t-1}\mid \xblk_t,\xpre,\,y)\;\propto\;
+\pth(\xblk_{t-1}\mid \xblk_t,\xpre)\;\cdot\;p(y\mid \xblk_{t-1},\xblk_t,\xpre).
+\label{eq:bayes}
+\end{equation}
+$p(y\mid\cdot)$ 를 직접 모르므로, 시각 $t$ 로 조건화된 \emph{노이즈-상태 분류기}
+$\pphi(y\mid x_t,t)$ 로 근사한다. 이것이 IW 와의 첫 번째 구조적 차이다
+(IW 는 clean $x_0$ 의 밀도비를 쓴다).
+
+% =====================================================================
+\section{노이즈-상태 분류기 $\pphi(y\mid x_t,t)$}
+% =====================================================================
+분류기는 canvas 형태 \emph{노이즈} 시퀀스를 입력받는다(vocab = 정점 $\cup$ \{END, PAD, MASK\}),
+시간 임베딩으로 $t$ 조건화, transformer + masked mean pooling, 그리고
+$\log\text{-odds}$ 를 출력한다(\code{dcbg\_plugin.py:70--91}):
+\begin{equation}
+z_\phi(x_t,t),\qquad
+\big[\log\pphi(y{=}0\mid x_t,t),\ \log\pphi(y{=}1\mid x_t,t)\big]
+=\big[\log\sigma(-z_\phi),\ \log\sigma(z_\phi)\big].
+\end{equation}
+
+\paragraph{생성-정합 corruption 으로 학습.}
+블록 확산의 생성 시점 상태를 그대로 재현해 학습한다:
+\begin{itemize}[nosep,leftmargin=1.4em]
+  \item \textbf{mask 커널}(\code{corrupt\_mask}, \code{dcbg\_plugin.py:107}):
+  $j$ 개의 \emph{확정 clean 블록} + 현재 블록을 rate $t$ 로 마스킹(first-hitting marginal),
+  미래 블록은 부재. 즉 분류기도 ``확정 prefix $\xpre$ + 노이즈 현재 블록''을 본다.
+  \item \textbf{graph 커널}(\code{corrupt\_graph}, \code{dcbg\_plugin.py:132}):
+  현재 블록 전체를 $q(x_t\mid x_0)=\Cat(x_0\Qb_t)$ 로 정수 $t$ 에서 노이징, prefix 는 clean.
+\end{itemize}
+
+\begin{remark}[IW disc 와의 통제·차이]
+\code{DCBGClassifierAdj}(\code{dcbg\_plugin.py:393})는 IW 판별자와 \emph{동일한}
+GraphSAGE + 전이 피처$[\text{edge-exists},\text{is-transition},\text{deg-ratio}]$
++ bounded logit $\lambda\tanh(z/\lambda)$ 을 쓴다(\code{:408--443}). 학습 데이터·negative pool·백본도 통제한다.
+\textbf{유일하게 남는 차이는 입력이 노이즈 $x_t$ + $t$ 라는 점}이며, 이는 D-CBG 수식이 내재적으로 요구하는 것이다.
+\end{remark}
+
+% =====================================================================
+\section{위치별 posterior tilting}
+% =====================================================================
+식~\eqref{eq:bayes} 를 이산 factorized 역과정에 적용하면, 위치 $\ell$ 의 다음 값 $k$ 에 대해
+\begin{equation}
+p(\xblk_{t-1}{}^{\ell}=k\mid x_t,\xpre,y)
+\;\propto\;
+\pth(\xblk_{t-1}{}^{\ell}=k\mid x_t,\xpre)\;\cdot\;
+\pphi\!\big(y\mid x_t^{\,\ell\to k},\,t\big)^{\gamma},
+\label{eq:tilt}
+\end{equation}
+즉 로그 공간에서 \textbf{덧셈 tilt}:
+$\;\log\pth(\cdot=k) + \gamma\,\log\pphi(y\mid x_t^{\ell\to k},t)\;$ 후 softmax.
+여기서 $x_t^{\ell\to k}$ 는 현재 노이즈 상태 $x_t$ 의 위치 $\ell$ 만 $k$ 로 치환한 것으로,
+$p(y\mid \xblk_{t-1})$ 의 tractable 대리(surrogate)이다.
+$\gamma$ 는 guidance 세기(우리 실험 $\gamma=4$; $\gamma\le2$ 는 무력, 보고서 §5).
+이것이 IW 와의 두 번째 구조적 차이다: IW 는 joint 후보 $x_0$ 를 self-normalized 재가중하는 반면,
+D-CBG 는 \emph{위치별 reverse categorical 을 직접} 기울인다.
+
+% =====================================================================
+\section{계산 변형 1 — Exact enumeration (mask)}
+% =====================================================================
+mask first-hitting 은 매 reveal 에서 \emph{한 위치} $\ell$(=\code{idx})만 소비하므로,
+식~\eqref{eq:tilt} 의 열거를 그 위치로 제한할 수 있다.
+그 위치를 vocab 의 모든 값 $k$ 로 치환한 $x_t^{\ell\to k}$ 를 만들어 분류기에 통과시킨다:
+\begin{equation}
+\text{guided}(k)=\log\pth(\xblk_{t-1}{}^{\ell}=k\mid x_t,\xpre)+\gamma\,\log\pphi(y\mid x_t^{\ell\to k},t),
+\quad \xblk_{t-1}{}^{\ell}\sim\softmax_k \text{guided}(k).
+\end{equation}
+구현: \code{xt\_jumps}$=x_t^{\ell\to k}$ 를 $(b,V,s)$ 로 만들고(\code{dcbg\_plugin.py:222--224}),
+\code{clf.get\_log\_probs} 를 마이크로배치로 평가(\code{:227--231}),
+\code{guided = log\_p[idx] + gamma*clf\_lp} 후 샘플(\code{:233--235}).
+\textbf{비용: reveal 당 분류기 호출 $=|V|\approx1{,}393$}(reveal당 forward $V$회).
+
+% =====================================================================
+\section{계산 변형 2 — First-order (Taylor)}
+% =====================================================================
+$V$ 회 열거 대신, 로그-분류기를 one-hot 심플렉스에서 1차 Taylor 전개한다.
+$f(x)=\log\pphi(y{=}1\mid x,t)$ 로 두고 현재 상태 $x$ 근방에서
+\begin{equation}
+f\big(x^{\ell\to k}\big)\approx f(x)+\big\langle \nabla_{x^{\ell}}f,\ e_k-x^{\ell}\big\rangle
+= f(x)+\underbrace{\big[\nabla_{x^{\ell}}f\big]_k-\big\langle x^{\ell},\nabla_{x^{\ell}}f\big\rangle}_{\text{centered gradient}}.
+\label{eq:taylor}
+\end{equation}
+따라서 \emph{단 한 번}의 forward+backward 로 모든 $(\ell,k)$ 에 대한
+$\log\pphi(y\mid x_t^{\ell\to k})$ 근사를 동시에 얻는다.
+구현(mask \code{dcbg\_plugin.py:208--219}, graph \code{:319--328}):
+\begin{equation}
+\code{grad}=\nabla_{x_{\text{oh}}}f,\quad
+\code{ratio}=\code{grad}-(x_{\text{oh}}\!\odot\!\code{grad})\!\sum_{\text{vocab}},\quad
+\code{full\_lp}=\code{ratio}+f(x),
+\end{equation}
+이는 정확히 식~\eqref{eq:taylor} 이다(\code{ratio} = centered gradient, $+f(x)$).
+\textbf{비용: 스텝당 forward+backward 1회}.
+\begin{remark}[본 그래프에서 무력]
+보고서 §5 에서 first-order 는 \emph{모든 블록에서 base 와 노이즈 이내}(무력)로 재확인됐다.
+one-hot(특히 MASK/uniform) 임베딩에서 취한 gradient 가 이산 치환 효과를 근사하지 못하기 때문이다
+— 식~\eqref{eq:taylor} 의 선형화가 그래프 구조의 큰 이산 점프에 부적합하다.
+\end{remark}
+
+% =====================================================================
+\section{Graph (균일 CTMC) 커널}
+% =====================================================================
+graph 에서는 D3PM posterior 를 tilt 한다. 무가이던스 posterior
+$\text{post}\propto x_t Q_t^{\top}\odot \hat{x}_0\Qb_{t-1}$
+(\code{dcbg\_plugin.py:313--317}; $\hat x_0=\softmax$ 디노이저)에 로그 공간으로 tilt 를 더한다:
+\begin{equation}
+p(\xblk_{t-1}{}^{\ell}=k\mid x_t,\xpre,y)
+=\softmax_k\!\Big[\log\text{post}(k)+\gamma\,\log\pphi(y\mid x_t^{\ell\to k},t)\Big]
+\quad(\code{dcbg\_plugin.py:330--334}).
+\end{equation}
+$\log\pphi$ 는 first-order(식~\eqref{eq:taylor})로만 얻는다:
+\textbf{exact 열거는 $T{=}100$ 스텝 $\times$ 블록 위치 $\times |V|$ 로 비현실적}(경로당 $\sim$8.9M 분류기 호출),
+따라서 graph 는 first-order 전용이다. 최종 디코드는 모델 자체의 (무가이던스) 인접성 walk(\code{:336--}).
+
+% =====================================================================
+\section{비용·구조 대비 (D-CBG vs IW)}
+% =====================================================================
+\begin{center}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}l l l@{}}
+\toprule
+ & \textbf{D-CBG} & \textbf{IW (자매 문서)}\\
+\midrule
+분류기 입력 & 노이즈 상태 $x_t$ + 시간 $t$ & clean 부분 경로 $[\xpre\Vert x_0]$ (시간 무관)\\
+학습 대상 & $\pphi(y\mid x_t,t)$ (전 노이즈레벨) & $\Dphi$: $q$ vs $\pth$ (clean)\\
+guidance & 위치별 posterior tilt $+\gamma\log\pphi$ & joint 후보 self-normalized 재가중 $w{=}D/(1{-}D)$\\
+비용(exact) & reveal당 $|V|\approx1{,}393$ 호출 & reveal당 $N{=}100$ 호출 (인덱스 입력)\\
+비용(근사) & 스텝당 fwd+bwd 1회 (무력) & —\\
+graph 커널 & first-order 전용 (exact 비현실적) & exact 재가중 가능(§5.3에서 강력)\\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent 분류기 아키텍처·데이터·백본을 통제하면 남는 차이는 \emph{방법 내재적}이다:
+노이즈-상태 분류(D-CBG)는 uniform 커널에서 학습 자체가 chance-level 로 실패하는 반면,
+IW 의 clean 부분경로 정식화(자매 문서 Lemma 1)는 그 문제를 우회한다 — 이것이 방법론의 기여다.
+
+% =====================================================================
+\section{수식 $\leftrightarrow$ 코드 대응표}
+% =====================================================================
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}p{0.52\linewidth} l@{}}
+\toprule
+\textbf{수식} & \textbf{코드 위치 (\code{dcbg\_plugin.py})}\\
+\midrule
+분류기 $\pphi(y\mid x_t,t)$, $\log$-probs & \code{:70--91} (\code{DCBGClassifier})\\
+adj/edge 채널 + bounded logit (통제) & \code{:408--443} (\code{DCBGClassifierAdj})\\
+생성-정합 corruption (mask / graph) & \code{:107 / :132}\\
+posterior tilt $\log\pth+\gamma\log\pphi$ (식~\ref{eq:tilt}) & \code{:233} (mask), \code{:331} (graph)\\
+exact enumeration $x_t^{\ell\to k}$ (변형 1) & \code{:222--231}\\
+first-order Taylor (식~\ref{eq:taylor}, 변형 2) & \code{:208--219} (mask), \code{:319--328} (graph)\\
+graph D3PM posterior + tilt & \code{:313--334}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
