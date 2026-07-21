@@ -799,7 +799,8 @@ class BlockDiffusion(nn.Module):
     @torch.no_grad()
     def plan_guided(self, origs, dests, disc, adj_scn, deg_ratio, n_is=100,
                     w_gamma=1.0, cand_temp=1.0, guidance_scale=None,
-                    disc_micro_bs=4096, ess_log=None, adj_prop=False, **kwargs):
+                    disc_micro_bs=4096, ess_log=None, adj_prop=False,
+                    diag_log=None, **kwargs):
         """plan() with discriminator importance-weight guidance at every
         first-hitting reveal. Mask kernel only. disc: BDDiscriminator or None
         (None + adj_prop=True -> pure adjacency-constrained sampling, the
@@ -845,12 +846,12 @@ class BlockDiffusion(nn.Module):
                     self._denoise_block_mask_guided(
                         seq, origs, dests, w, disc, adj_scn, deg_ratio,
                         n_is, w_gamma, cand_temp, disc_micro_bs, ess_log,
-                        adj_prop=adj_prop)
+                        adj_prop=adj_prop, diag_log=diag_log)
                 else:
                     self._denoise_block_graph_guided(
                         seq, origs, dests, w, disc, adj_scn, deg_ratio,
                         n_is, w_gamma, cand_temp, disc_micro_bs, ess_log,
-                        adj_prop=adj_prop)
+                        adj_prop=adj_prop, diag_log=diag_log)
 
             lo = max(pfx, s - block)
             block_tokens = seq[:, lo:s].cpu()
@@ -900,7 +901,8 @@ class BlockDiffusion(nn.Module):
 
     def _denoise_block_mask_guided(self, seq, origs, dests, w, disc, adj_scn,
                                    deg_ratio, n_is, w_gamma, cand_temp,
-                                   micro_bs, ess_log, adj_prop=False):
+                                   micro_bs, ess_log, adj_prop=False,
+                                   diag_log=None):
         """First-hitting reveal where the reveal-target x0-bar is the
         D/(1-D)-reweighted candidate average (Eqs. 3+5 of the guidance doc)."""
         b, s = seq.shape
@@ -999,6 +1001,16 @@ class BlockDiffusion(nn.Module):
             if ess_log is not None:
                 ess = (wgt.sum(1) ** 2 / (wgt ** 2).sum(1).clamp(min=1e-12))
                 ess_log.append(float(ess[active].mean().item()) if bool(active.any()) else float("nan"))
+            if diag_log is not None:
+                ess_d = (wgt.sum(1) ** 2 / (wgt ** 2).sum(1).clamp(min=1e-12))
+                uus = [torch.unique(cand[bi], dim=0).shape[0]
+                       for bi in range(b) if bool(active[bi])]
+                diag_log.append({
+                    "t": float(t[active].mean().item()) if bool(active.any()) else float("nan"),
+                    "uniq": (sum(uus) / len(uus)) if uus else float("nan"),
+                    "ess": float(ess_d[active].mean().item()) if bool(active.any()) else float("nan"),
+                    "n_is": n_is,
+                })
 
             # ---- reweighted reveal target x0-bar ----------------------
             idx_flat = cand.permute(0, 2, 1).reshape(b * block, n_is)   # (b*block, n)
@@ -1025,7 +1037,8 @@ class BlockDiffusion(nn.Module):
 
     def _denoise_block_graph_guided(self, seq, origs, dests, w, disc, adj_scn,
                                     deg_ratio, n_is, w_gamma, cand_temp,
-                                    micro_bs, ess_log, adj_prop=False):
+                                    micro_bs, ess_log, adj_prop=False,
+                                    diag_log=None):
         """Guided T-step CTMC reverse for the uniform (graph) kernel.
         Per step: mean-field candidates from x0-hat, D/(1-D) weights on
         [prefix || candidate block], reweighted x0-bar drives the posterior
@@ -1088,6 +1101,15 @@ class BlockDiffusion(nn.Module):
                 if ess_log is not None:
                     ess = (wgt.sum(1) ** 2 / (wgt ** 2).sum(1).clamp(min=1e-12))
                     ess_log.append(float(ess.mean().item()))
+                if diag_log is not None:
+                    ess_d = (wgt.sum(1) ** 2 / (wgt ** 2).sum(1).clamp(min=1e-12))
+                    uus = [torch.unique(cand[bi], dim=0).shape[0] for bi in range(b)]
+                    diag_log.append({
+                        "t": float(t) / float(self.max_T),
+                        "uniq": sum(uus) / len(uus),
+                        "ess": float(ess_d.mean().item()),
+                        "n_is": n_is,
+                    })
 
                 idx_flat = cand.permute(0, 2, 1).reshape(b * block, n_is)
                 w_flat = wgt.unsqueeze(1).expand(b, block, n_is).reshape(b * block, n_is)
