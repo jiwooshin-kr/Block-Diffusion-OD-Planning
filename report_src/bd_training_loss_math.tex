@@ -1,0 +1,194 @@
+\documentclass[11pt]{article}
+
+% ---- xelatex + Korean ----
+\usepackage{kotex}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=blue!55!black,urlcolor=teal]{hyperref}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\pth}{p_\theta}
+\newcommand{\pphi}{p_\phi}
+\newcommand{\Qb}{\bar{Q}}
+\newcommand{\xz}{x_0}
+\newcommand{\xt}{x_t}
+\newcommand{\xpre}{x^{<b}}
+\newcommand{\bLM}{\mathcal{M}}
+\DeclareMathOperator{\Cat}{Cat}
+\DeclareMathOperator{\KL}{KL}
+\DeclareMathOperator{\softmax}{softmax}
+\DeclareMathOperator{\CE}{CE}
+\DeclareMathOperator*{\E}{\mathbb{E}}
+
+\theoremstyle{definition}
+\newtheorem{remark}{Remark}
+
+\title{\bfseries Block Diffusion 학습 Loss 정식화\\[2pt]
+\large 확산 모델 학습 loss (mask / graph 커널) + Discriminator·Classifier 학습 loss}
+\author{Block-Diffusion-OD-Planning \quad (v2 backbones) \\[-1pt]
+\small 자매 문서: \code{BD\_BLOCK\_GUIDANCE\_MATH.pdf}, \code{BD\_DCBG\_MATH.pdf}}
+\date{2026-07-21}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+본 문서는 학습에 쓰이는 모든 loss 를 수식으로 정리한다:
+(1) block-diffusion 확산 모델 학습 loss —흡수(mask) 커널의 SUBS 가중 CE 와
+균일(graph) 커널의 D3PM ELBO(+보조 CE·연결성 정칙화)—,
+(2) guidance 용 두 판별기의 학습 loss —IW discriminator(clean 부분경로 BCE)와
+D-CBG classifier(노이즈 상태 BCE). 각 수식에 구현 위치(\code{models\_seq/bd\_models.py},
+\code{bd\_trainer.py}, \code{train\_bd\_disc.py}, \code{train\_dcbg\_classifier.py})를 병기한다.
+\end{abstract}
+
+% =====================================================================
+\section{Canvas 와 loss mask (길이 처리)}
+% =====================================================================
+경로 $[\,\text{ori},v_1,\dots,v_L{=}\text{dst}\,]$ 를 canvas
+$x_0=[\text{dst},\text{ori},v_1,\dots,v_L{=}\text{dst},\langle\text{END}\rangle,\dots\mid \text{PAD},\dots]$
+로 만든다(\code{build\_canvas}). 학습 대상 집합 $\bLM$ (loss mask)은:
+\begin{itemize}[nosep,leftmargin=1.4em]
+  \item \textbf{학습됨}: 경로 본문 $v_1..v_L$ + dst 가 속한 블록의 $\langle\text{END}\rangle$ tail.
+  \item \textbf{제외}: dst 블록 이후의 \textbf{PAD 블록 전체} (노이즈·loss 대상 아님).
+  \item 조건 dropout 된 표본은 prefix $[\text{dst},\text{ori}]$ 도 노이즈+학습(무조건 생성용): $\bLM[\neg\text{cond},{:}\text{pfx}]{=}\text{True}$
+        (\code{bd\_models.py:435, 498}).
+\end{itemize}
+블록별 시각 $t_b$ 를 뽑아 토큰별 $t_{\text{tok}}=t_b$ (블록 내 공유)로 확장한다.
+
+% =====================================================================
+\section{확산 학습 loss — mask (흡수/SUBS) 커널}
+% =====================================================================
+블록별 $t_b\sim\mathcal U[10^{-3},1]$. 각 학습 위치 $i\in\bLM$ 는 확률 $t_i$ 로 [MASK] 로 치환:
+\begin{equation}
+\text{move}_i=\mathbf 1[u_i<t_i]\wedge\mathbf 1[i\in\bLM],\qquad
+\xt^i=\begin{cases}\text{[MASK]}&\text{move}_i\\ \xz^i&\text{else}\end{cases}
+\quad(\code{bd\_models.py:437--438}).
+\end{equation}
+SUBS 파라미터화: [MASK] 상태의 확률을 0 으로 두고($\text{logits}[\text{MASK}]{=}-\infty$) softmax,
+$\log \pth(\xz^i\mid \xt,\xpre)=\big[\log\softmax(\text{logits}_i)\big]_{\xz^i}$
+(\code{:451--453}). Loss 는 마스킹된 위치의 \textbf{$1/t$-가중 음의 로그가능도}:
+\begin{equation}
+\boxed{\;\mathcal L_{\text{mask}}
+=\frac{1}{|\bLM|}\sum_{i}\ \text{move}_i\cdot\Big(-\tfrac{1}{t_i}\,\log \pth(\xz^i\mid \xt,\xpre)\Big)\;}
+\quad(\code{bd\_models.py:456--458}).
+\end{equation}
+$1/t$ 가중은 MDLM/SUBS 흡수 ELBO 의 연속시간 가중이며, 정규화 분모는 loss-mask 크기 $|\bLM|$ 이다.
+(bd3lms \code{diffusion.py:819--891} 대응.)
+
+% =====================================================================
+\section{확산 학습 loss — graph (균일 CTMC/D3PM) 커널}
+% =====================================================================
+$\Qb_t$ =누적 전이행렬(\code{matrices}), $Q_t$ =한 스텝 전이(\code{Q}). 블록별 정수
+$t_b\in\{1,\dots,T\}$ (uniform/early/cosine 샘플링, \code{bd\_models.py:479--491}).
+확산 상태는 $q(\xt\mid\xz)=\Cat(\xz\Qb_t)$ 로 학습 위치에만 노이징(PAD clean):
+\begin{equation}
+\xt^i\sim \Cat\big([\Qb_{t_i}]_{\cdot,\xz^i}\big)\quad(\code{:504--506}),\qquad
+\hat{x}_0=\softmax(\text{logits}_{:V_0})\quad(\code{:513}).
+\end{equation}
+\textbf{참(true) posterior} 와 \textbf{예측(pred) posterior} (D3PM):
+\begin{align}
+q(x_{t-1}{=}k\mid \xt,\xz)&\propto [Q_t]_{k,\xt}\,[\Qb_{t-1}]_{k,\xz}
+&&(\code{:517--519}),\\
+\pth(x_{t-1}{=}k\mid \xt,\xpre)&\propto [Q_t]_{k,\xt}\,\big[\Qb_{t-1}^{\top}\hat{x}_0\big]_{k}
+&&(\code{:529--531}).
+\end{align}
+per-token D3PM ELBO 항은 두 posterior 의 KL(masked mean):
+\begin{equation}
+\mathcal L_{\text{KL}}=\frac{1}{|\bLM|}\sum_{i\in\bLM}\KL\!\big(q(x_{t-1}\mid \xt,\xz^i)\,\|\,\pth(x_{t-1}\mid \xt,\xpre)\big)
+\quad(\code{:537--538}).
+\end{equation}
+보조 $x_0$ 교차엔트로피와 연결성 정칙화(인접행렬 $A$ 위 bilinear, 연속 실정점쌍):
+\begin{align}
+\mathcal L_{\text{CE}}&=\frac{1}{|\bLM|}\sum_{i\in\bLM}-\log[\hat{x}_0^i]_{\xz^i}
+\quad(\code{:539--540}),\\
+\mathcal L_{\text{con}}&=-\frac{100}{Z}\sum_{\ell}\text{pair}_\ell\Big(
+\hat{x}_0^{\ell}{}^{\!\top} A\,\log\hat{x}_0^{\ell+1}
++\hat{x}_0^{\ell+1}{}^{\!\top} A\,\log\hat{x}_0^{\ell}\Big)
+\quad(\code{:545--552}).
+\end{align}
+\textbf{총 loss (ce-gating, \code{bd\_trainer.py:39--52})}: CE 가 임계 미만이면 KL 만, 아니면 가중합:
+\begin{equation}
+\boxed{\;\mathcal L_{\text{graph}}=
+\begin{cases}
+\mathcal L_{\text{KL}}, & \mathcal L_{\text{CE}}<60/16\ \text{또는}\ \lambda_{\text{ce}}{=}\lambda_{\text{con}}{=}0,\\[2pt]
+\mathcal L_{\text{KL}}+\lambda_{\text{ce}}\mathcal L_{\text{CE}}+\lambda_{\text{con}}\mathcal L_{\text{con}}, & \text{그 외.}
+\end{cases}\;}
+\end{equation}
+(\code{seq\_models.py} 의 Restorer.forward 수식을 블록-확산 attention 으로 이식.)
+
+% =====================================================================
+\section{판별기 학습 loss (1) — IW discriminator (clean 부분경로)}
+% =====================================================================
+IW disc 는 \emph{clean} 부분경로에서 ``실제 예외 데이터 vs negative''를 BCE 로 구분한다
+(label smoothing $\epsilon{=}0.05$, \code{train\_bd\_disc.py:130--134}):
+\begin{equation}
+\boxed{\;\mathcal L_{\text{disc}}=\E\big[-\tilde y\log\sigma(\ell_\phi)-(1-\tilde y)\log\big(1-\sigma(\ell_\phi)\big)\big],\quad
+\tilde y=\begin{cases}1-\epsilon&(\text{pos})\\ \epsilon&(\text{neg})\end{cases}\;}
+\end{equation}
+$\ell_\phi=\lambda\tanh(z_\phi/\lambda)$ (bounded logit, $\lambda{=}4$). 입력은
+clean 부분경로 $[\xpre\Vert x_0]$ + 시나리오 인접성(시간 조건 없음).
+positive = except 경로(무작위 절단 \code{make\_partial}); negative 3택:
+\begin{center}\small
+\begin{tabular}{@{}l l l@{}}
+\toprule
+\code{-neg} & negative 분포 & 최적해 $\sigma(\ell_\phi)$ 가 주는 비율\\
+\midrule
+\code{data} & normal 실제 경로 & $q_{\text{exc}}/(q_{\text{exc}}{+}q_{\text{norm}})\Rightarrow D/(1{-}D){=}q_{\text{exc}}/q_{\text{norm}}$\\
+\code{model}& 그 블록 모델 unconditional 생성 & $\Rightarrow D/(1{-}D){=}q_{\text{exc}}/\pth$ \ (guidance 가 요구하는 분모)\\
+\code{mix} & 50\% normal + 50\% model & 위 둘의 혼합\\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{remark}
+Bayes-최적 판별자에서 $\sigma(\ell_\phi)=\frac{q}{q+p_{\text{neg}}}$ 이므로 $\frac{D}{1-D}=\frac{q}{p_{\text{neg}}}$.
+\code{-neg model} 이면 $p_{\text{neg}}=\pth$ 라 guidance 가중치 $w=q/\pth$ 를 정확히 학습한다
+(자매 문서 \code{BD\_BLOCK\_GUIDANCE\_MATH.pdf} 식~(3)·Lemma 1).
+\end{remark}
+
+% =====================================================================
+\section{판별기 학습 loss (2) — D-CBG classifier (노이즈 상태)}
+% =====================================================================
+D-CBG classifier 는 \emph{노이즈} 상태 $\xt$ 를 시간 $t$ 로 조건화하여 같은 BCE 로 학습한다
+(\code{train\_dcbg\_classifier.py:114--119}):
+\begin{equation}
+\boxed{\;\mathcal L_{\text{clf}}=\E\big[-\tilde y\log\sigma\big(z_\phi(\xt,t)\big)-(1-\tilde y)\log\big(1-\sigma(z_\phi(\xt,t))\big)\big]\;}
+\end{equation}
+positive/negative 를 \textbf{생성 시점과 동일한 forward} 로 손상시켜 입력한다:
+\begin{itemize}[nosep,leftmargin=1.4em]
+  \item mask: \code{corrupt\_mask} — $j$ 개 확정 블록 + 현재 블록 rate $t$ 마스킹(\code{dcbg\_plugin.py:107}).
+  \item graph: \code{corrupt\_graph} — 현재 블록을 $q(\xt\mid\xz)$ 로 정수 $t$ 노이징(\code{:132}).
+\end{itemize}
+따라서 $z_\phi$ 는 \textbf{전 노이즈레벨에 걸친} $p_\phi(y\mid \xt,t)$ 를 학습한다 — IW disc(§4)와의
+유일한 차이는 이 \emph{노이즈-상태 + 시간 입력}이며, 아키텍처($\code{DCBGClassifierAdj}$: 동일 GraphSAGE
++ edge 피처 + bounded logit)·데이터·negative pool 은 통제된다.
+
+% =====================================================================
+\section{수식 $\leftrightarrow$ 코드 대응표}
+% =====================================================================
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}p{0.5\linewidth} l@{}}
+\toprule
+\textbf{수식} & \textbf{코드 위치}\\
+\midrule
+canvas·loss mask (길이 처리) & \code{bd\_models.py: build\_canvas, :435, :498}\\
+mask SUBS $1/t$ 가중 CE $\mathcal L_{\text{mask}}$ & \code{bd\_models.py:437--464}\\
+graph $q(\xt\mid\xz)$ 노이징 & \code{bd\_models.py:504--506}\\
+true/pred posterior (D3PM) & \code{bd\_models.py:517--531}\\
+$\mathcal L_{\text{KL}},\mathcal L_{\text{CE}},\mathcal L_{\text{con}}$ & \code{bd\_models.py:537--552}\\
+ce-gating 총합 $\mathcal L_{\text{graph}}$ & \code{bd\_trainer.py:39--52}\\
+IW disc BCE + label smoothing & \code{train\_bd\_disc.py:130--134}\\
+negative 3택 (data/mix/model) & \code{train\_bd\_disc.py:94--128}\\
+D-CBG classifier BCE (노이즈 입력) & \code{train\_dcbg\_classifier.py:114--119}\\
+생성-정합 corruption & \code{dcbg\_plugin.py:107 / :132}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

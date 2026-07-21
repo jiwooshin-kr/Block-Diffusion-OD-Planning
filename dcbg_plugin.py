@@ -130,19 +130,25 @@ def corrupt_mask(paths, block, rng, END, PAD, MASK, max_len=128):
 
 
 def corrupt_graph(paths, matrices, max_T, rng, END, PAD, block=64, max_len=128):
-    """Graph/uniform-kernel state: whole current block noised by
-    q(x_t | x_0) at integer t; prefix (dst, ori) clean."""
+    """Graph/uniform-kernel BLOCK-DIFFUSION state (block-structured, mirrors
+    corrupt_mask): j committed clean blocks + the current block noised by
+    q(x_t | x_0) at integer t; future blocks absent (truncated); prefix
+    (dst, ori) and committed blocks stay clean."""
     V0 = matrices.shape[1]
     outs, ts = [], []
     for p in paths:
         c = make_canvas(p, block, max_len)
         c = [END if v is None else v for v in c]
+        nb = max(1, len(c) // block)
+        j = int(rng.integers(0, nb))                       # committed clean blocks
         t = int(rng.integers(1, max_T + 1))
-        row = torch.tensor(c, dtype=torch.long)
+        cur_lo, cur_hi = j * block, (j + 1) * block
+        row = torch.tensor(c[:cur_hi], dtype=torch.long)   # future truncated
         x0 = row.clamp(max=V0 - 1)
-        distr = matrices[t, :, x0].T.clamp(min=0)     # (n, V0)
+        distr = matrices[t, :, x0].T.clamp(min=0)          # (cur_hi, V0)
         noised = torch.multinomial(distr, 1).squeeze(1)
-        row[2:] = noised[2:]
+        lo = max(cur_lo, 2)                                # prefix + committed clean
+        row[lo:cur_hi] = noised[lo:cur_hi]                 # noise ONLY current block
         outs.append(row)
         ts.append(float(t))
     n = max(len(r) for r in outs)
@@ -316,16 +322,19 @@ def plan_dcbg_graph(model, origs, dests, clf, gamma, **kw):
                     post = post / post.sum(1, keepdim=True).clamp(min=1e-8)
                     diffusion_log_probs = post.clamp(min=1e-12).log().view(b, block, V0)
 
-                # ---- their first-order approximation (lines 1367-1381) ----
-                xt_one_hot = F.one_hot(seq[:, -block:], clf.vocab).to(torch.float)
+                # ---- first-order (Taylor), BLOCK-STRUCTURED: feed the FULL
+                # canvas (committed clean prefix + current noised block) so the
+                # classifier conditions on prior blocks; take the tilt on the
+                # current block's positions (matches block-structured training).
+                xt_full = F.one_hot(seq, clf.vocab).to(torch.float)   # (b, s, vocab)
                 with torch.enable_grad():
-                    xt_one_hot.requires_grad_(True)
-                    lp_xt = clf.get_log_probs(xt_one_hot, torch.full((b,), float(t),
-                                                                     device=model.device))
+                    xt_full.requires_grad_(True)
+                    lp_xt = clf.get_log_probs(xt_full, torch.full((b,), float(t),
+                                                                  device=model.device))
                     lp_xt[..., 1].sum().backward()
-                    grad = xt_one_hot.grad
-                ratio = (grad - (xt_one_hot * grad).sum(dim=-1, keepdim=True)).detach()
-                clf_lp = (ratio + lp_xt[..., 1].detach()[:, None, None])[..., :V0]
+                    grad = xt_full.grad
+                ratio = (grad - (xt_full * grad).sum(dim=-1, keepdim=True)).detach()
+                clf_lp = (ratio + lp_xt[..., 1].detach()[:, None, None])[:, -block:, :V0]
 
                 with torch.no_grad():
                     guided = (gamma * clf_lp) + diffusion_log_probs

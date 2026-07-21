@@ -42,6 +42,7 @@ if __name__ == "__main__":
     ap.add_argument("-lr", type=float, default=1e-3)
     ap.add_argument("-seed", type=int, default=1)
     ap.add_argument("-porto", type=str, default="./porto_data")
+    ap.add_argument("-outsfx", type=str, default="", help="suffix appended to output filename (e.g. _bfix)")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -142,7 +143,7 @@ if __name__ == "__main__":
             run_loss, run_acc = 0.0, 0.0
 
     clf.eval()
-    sfx = ("_adj" if args.adj else "") + ("_e99" if args.exp == "e99" else "") + ("_modelneg" if args.neg == "model" else "")
+    sfx = ("_adj" if args.adj else "") + ("_e99" if args.exp == "e99" else "") + ("_modelneg" if args.neg == "model" else "") + args.outsfx
     out = f"./sets_disc/DCBGclf_{args.kernel}_blk{args.blk}_f{fam}_p{int(args.frac)}{sfx}.pth"
     torch.save(clf, out)
     print(f"saved {out}")
