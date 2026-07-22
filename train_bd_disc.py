@@ -63,6 +63,9 @@ if __name__ == "__main__":
     ap.add_argument("-porto", type=str, default="./porto_data")
     ap.add_argument("-out", type=str, default="./sets_disc")
     ap.add_argument("-pool", type=str, default="./sets_disc/neg_pool.pth")
+    ap.add_argument("-max_pos_total", type=int, default=0,
+                    help="cap total positive pool (split evenly across scenarios) to balance vs the negative pool; 0=off")
+    ap.add_argument("-outsfx", type=str, default="", help="suffix appended to output filename")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -85,6 +88,12 @@ if __name__ == "__main__":
         A_e = load_A(args.porto, fam, f"except_{e}")
         exc_adj[e] = A_e
         exc_dr[e] = (A_e.sum(1) / deg_norm).float()
+    if args.max_pos_total > 0:
+        per_exc = max(1, args.max_pos_total // len(exceptions))
+        for e in exceptions:
+            exc_paths[e] = exc_paths[e][:per_exc]
+        print(f"[disc] balanced positives: capped to {per_exc}/scenario "
+              f"-> total {sum(len(v) for v in exc_paths.values())}")
     n_vertex = A_norm.shape[0]
     print(f"[disc] fam={fam} frac={args.frac}% exp={args.exp} neg={args.neg} | "
           f"exceptions={len(exceptions)}, paths/exc={np.mean([len(v) for v in exc_paths.values()]):.0f}, "
@@ -166,5 +175,6 @@ if __name__ == "__main__":
             name += f"_blk{m.group(1)}"
         elif g:
             name += f"_graph{g.group(1)}"
+    name += args.outsfx
     torch.save(disc, join(args.out, f"{name}.pth"))
     print(f"saved {join(args.out, f'{name}.pth')}")

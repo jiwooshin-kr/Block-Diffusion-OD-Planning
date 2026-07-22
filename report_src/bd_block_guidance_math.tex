@@ -230,8 +230,21 @@ $\mathrm{ESS}\!\to\!1$ = 소수 후보 집중(guidance 강함, 분산 위험).
 제외된 후보는 $q$ 의 지지집합 밖($w=0$)이고, 위치별 정규화상수 $Z_\ell$ 은
 후보-공통이라 소거된다. 따라서 목표분포~\eqref{eq:target} 는 불변이며 분산만 감소한다.
 \end{lemma}
-\noindent 구현: \code{plan\_guided(\dots, adj\_prop=True)},
-graph 최종 디코드의 시나리오 인접성 사용(\code{bd\_models.py:1113--1121}).
+\noindent \textbf{구체적 마스크(mask 커널, reveal당).} 블록 위치 $\ell$ 의 이미 공개된
+좌/우 이웃을 $u_L,u_R$ 라 하면, 후보 정점 $k$ 의 legality 마스크는
+\begin{equation}
+m_\ell(k)=\Big[\,u_L\text{ 공개}\Rightarrow A_\mathrm{scn}(u_L,k)\,\Big]\cdot
+          \Big[\,u_R\text{ 공개}\Rightarrow A_\mathrm{scn}(k,u_R)\,\Big],\qquad
+p_{\text{cand}}\leftarrow \frac{p_{\text{cand}}\odot m_\ell}{\sum_k (p_{\text{cand}}\odot m_\ell)}
+\end{equation}
+즉 후보 $k$ 는 \emph{공개된 양쪽 이웃과 시나리오 edge 로 연결될 때만} 살아남고, 그 외에는
+$p_{\text{cand}}$ 에서 확률 0 이 된다(제거·미존재 edge 사용을 원천 차단). 공개 안 된 이웃 쪽은
+제약 없음(마스크 1). 이 곱형 마스크가 Lemma~\ref{lem:adj} 의 ``$A_\mathrm{scn}$-합법 전이''
+제한을 구현한다.
+
+\noindent 구현: \code{plan\_guided(\dots, adj\_prop=True)}; mask 커널 reveal당 마스킹
+\code{bd\_models.py:929--956}; graph 최종 디코드의 시나리오 인접성 사용
+\code{bd\_models.py:1113--1121}.
 
 % =====================================================================
 \section{수식 $\leftrightarrow$ 코드 대응표}
@@ -252,7 +265,7 @@ graph D3PM posterior~\eqref{eq:graphpost} & \code{bd\_models.py:1103--1111} \\
 ESS $(\sum w)^2/\sum w^2$ & \code{bd\_models.py:1000,\ 1089} \\
 partial-path 판별자 입력 (Lemma~\ref{lem:partial}) & \code{bd\_disc.py:119--157} \\
 무작위 절단 학습표본 & \code{bd\_disc.py:163--168} \\
-adj-masked proposal (Lemma~\ref{lem:adj}) & \code{bd\_models.py:1113--1121} \\
+adj-masked proposal (Lemma~\ref{lem:adj}) & \code{bd\_models.py:929--956 (mask), 1113--1121 (graph)} \\
 \bottomrule
 \end{tabular}
 \end{center}

@@ -583,6 +583,7 @@ class BlockDiffusion(nn.Module):
         if guidance_scale is None:
             guidance_scale = getattr(self.args, "guidance_scale", 1.0)
         w = float(guidance_scale)
+        order = kwargs.get("order", "first_hit")  # mask reveal order: first_hit | l2r
 
         uncond = origs is None or dests is None
         if uncond:
@@ -624,7 +625,7 @@ class BlockDiffusion(nn.Module):
 
             if uncond or s > pfx:  # the block has generative positions
                 if self.kernel == "mask":
-                    self._denoise_block_mask(seq, origs, dests, w)
+                    self._denoise_block_mask(seq, origs, dests, w, order=order)
                 else:
                     self._denoise_block_graph(seq, origs, dests, w, num_mc_samples)
 
@@ -686,7 +687,12 @@ class BlockDiffusion(nn.Module):
         return t_tok
 
     # ---- mask kernel: first-hitting sampler ---------------------------
-    def _denoise_block_mask(self, seq, origs, dests, w, temp=1.0):
+    def _denoise_block_mask(self, seq, origs, dests, w, temp=1.0, order="first_hit"):
+        """order="first_hit": reveal one uniformly-chosen masked position per
+        step (default, stochastic reveal order). order="l2r": reveal the
+        left-most still-masked position each step (deterministic within-block
+        left-to-right order). The first-hitting time schedule is identical in
+        both, so this isolates the effect of reveal ORDER only."""
         b, s = seq.shape
         block = self.block_size
         attn = get_block_causal_mask(s, block, self.device)
@@ -707,10 +713,14 @@ class BlockDiffusion(nn.Module):
             block_logits[..., self.MASK] = -1e9
             p_x0 = block_logits.softmax(dim=-1)               # (b, block, V)
 
-            # reveal exactly one uniformly-chosen masked position per sample
-            sel_probs = masked.float()
-            sel_probs[~active] = 1.0                          # dummy rows
-            idx = torch.multinomial(sel_probs, 1).squeeze(1)  # (b,)
+            if order == "l2r":
+                # deterministic left-to-right: leftmost still-masked position
+                idx = masked.float().argmax(dim=1)            # (b,) first True per row
+            else:
+                # reveal exactly one uniformly-chosen masked position per sample
+                sel_probs = masked.float()
+                sel_probs[~active] = 1.0                      # dummy rows
+                idx = torch.multinomial(sel_probs, 1).squeeze(1)  # (b,)
             p_sel = p_x0[arange, idx]                         # (b, V)
             tok = torch.multinomial(p_sel, 1).squeeze(1)
             pos = s - block + idx

@@ -65,7 +65,7 @@ if __name__ == "__main__":
     blocks = [int(b) for b in args.blocks.split(",")]
 
     fig, ax = plt.subplots(2, 2, figsize=(11, 8))
-    colors = {4: "tab:blue", 16: "tab:orange", 64: "tab:red"}
+    colors = {4: "tab:blue", 8: "tab:green", 16: "tab:orange", 32: "tab:purple", 64: "tab:red"}
     data = {}
     for r, kernel in enumerate(["mask", "graph"]):
         for blk in blocks:
