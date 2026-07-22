@@ -24,6 +24,7 @@ if __name__ == "__main__":
     ap.add_argument("-eval_num", type=int, default=1000)
     ap.add_argument("-batch", type=int, default=100)
     ap.add_argument("-seed", type=int, default=7)
+    ap.add_argument("-order", type=str, default="first_hit", choices=["first_hit", "l2r"])
     args = ap.parse_args()
 
     device = torch.device("cuda:0")
@@ -87,7 +88,7 @@ if __name__ == "__main__":
     for s in range(0, len(real), args.batch):
         b = real[s:s + args.batch]
         o, d = [p[0] for p in b], [p[-1] for p in b]
-        planned += model.plan(o, d, use_refine=False)
+        planned += model.plan(o, d, use_refine=False, order=args.order)
     p1 = [splice(p) for p in planned]
     p3 = [endpoint(p, g[-1]) for p, g in zip(planned, real)]
     p13 = []
