@@ -828,6 +828,7 @@ class BlockDiffusion(nn.Module):
         if guidance_scale is None:
             guidance_scale = getattr(self.args, "guidance_scale", 1.0)
         w = float(guidance_scale)
+        order = kwargs.get("order", "first_hit")  # mask reveal order: first_hit | l2r
 
         if type(origs) is list:
             origs = torch.Tensor(origs)
@@ -856,7 +857,7 @@ class BlockDiffusion(nn.Module):
                     self._denoise_block_mask_guided(
                         seq, origs, dests, w, disc, adj_scn, deg_ratio,
                         n_is, w_gamma, cand_temp, disc_micro_bs, ess_log,
-                        adj_prop=adj_prop, diag_log=diag_log)
+                        adj_prop=adj_prop, diag_log=diag_log, order=order)
                 else:
                     self._denoise_block_graph_guided(
                         seq, origs, dests, w, disc, adj_scn, deg_ratio,
@@ -912,9 +913,18 @@ class BlockDiffusion(nn.Module):
     def _denoise_block_mask_guided(self, seq, origs, dests, w, disc, adj_scn,
                                    deg_ratio, n_is, w_gamma, cand_temp,
                                    micro_bs, ess_log, adj_prop=False,
-                                   diag_log=None):
-        """First-hitting reveal where the reveal-target x0-bar is the
-        D/(1-D)-reweighted candidate average (Eqs. 3+5 of the guidance doc)."""
+                                   diag_log=None, order="first_hit"):
+        """Guided reveal where the reveal-target x0-bar is the
+        D/(1-D)-reweighted candidate average (Eqs. 3+5 of the guidance doc).
+        order="first_hit": reveal a uniformly-chosen masked position per step;
+        order="l2r": reveal the left-most masked position (deterministic
+        within-block left-to-right). Only the reveal-position choice changes."""
+        def _pick(masked, active):
+            if order == "l2r":
+                return masked.float().argmax(dim=1)               # leftmost masked
+            sel = masked.float()
+            sel[~active] = 1.0                                    # dummy rows
+            return torch.multinomial(sel, 1).squeeze(1)
         b, s = seq.shape
         block = self.block_size
         V = self.backbone.vocab_size
@@ -969,10 +979,8 @@ class BlockDiffusion(nn.Module):
 
             if disc is None:
                 # unguided adjacency-constrained control: reveal directly from
-                # the (masked) marginal at one uniformly-chosen masked position
-                sel_probs = masked.float()
-                sel_probs[~active] = 1.0
-                idx = torch.multinomial(sel_probs, 1).squeeze(1)
+                # the (masked) marginal at the selected masked position
+                idx = _pick(masked, active)
                 p_sel = p_cand[arange, idx].clamp(min=1e-12)
                 tok = torch.multinomial(p_sel, 1).squeeze(1)
                 pos = s - block + idx
@@ -1032,10 +1040,8 @@ class BlockDiffusion(nn.Module):
                                p_cand.reshape(b * block, V))
             xbar = xbar.view(b, block, V)
 
-            # ---- reveal ONE uniformly-chosen masked position ----------
-            sel_probs = masked.float()
-            sel_probs[~active] = 1.0
-            idx = torch.multinomial(sel_probs, 1).squeeze(1)
+            # ---- reveal ONE masked position (order-dependent) ---------
+            idx = _pick(masked, active)
             p_sel = xbar[arange, idx].clamp(min=0)
             p_sel = torch.where(p_sel.sum(1, keepdim=True) > 1e-12, p_sel,
                                 p_cand[arange, idx])

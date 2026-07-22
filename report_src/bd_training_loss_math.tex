@@ -81,6 +81,52 @@ $\log \pth(\xz^i\mid \xt,\xpre)=\big[\log\softmax(\text{logits}_i)\big]_{\xz^i}$
 $1/t$ 가중은 MDLM/SUBS 흡수 ELBO 의 연속시간 가중이며, 정규화 분모는 loss-mask 크기 $|\bLM|$ 이다.
 (bd3lms \code{diffusion.py:819--891} 대응.)
 
+\subsection*{BD3-LM NELBO (식 8) 와의 대응}
+BD3-LM 의 블록 확산 NELBO 는
+\begin{equation}
+-\log\pth(\mathbf x)\ \le\ \mathcal L_{\mathrm{BD}}
+=\sum_{b=1}^{B}\E_{t\sim[0,1]}\,\E_q\,
+\frac{\alpha'_t}{1-\alpha_t}\,\log\pth(\mathbf x^b\mid \mathbf x^b_t,\xpre).
+\tag{BD3-LM 8}
+\end{equation}
+위 $\mathcal L_{\text{mask}}$ 가 이 식을 그대로 구현함을 세 부분으로 확인한다.
+
+\textbf{(i) Weight 일치.} 코드는 선형(log-linear) 스케줄을 쓴다: 시각 $t$ 에서 마스킹 확률이
+정확히 $t$ ($\text{move}_i=\mathbf 1[u_i<t_i]$, \code{bd\_models.py:437}) 이므로 미마스킹
+확률은 $\alpha_t=1-t$. 따라서
+\begin{equation}
+\alpha'_t=-1,\qquad 1-\alpha_t=t
+\quad\Longrightarrow\quad
+\frac{\alpha'_t}{1-\alpha_t}=-\frac{1}{t},
+\end{equation}
+즉 식 8 의 weight 가 우리의 $-1/t$ 와 \emph{정확히} 일치한다(임의 스케줄 weight 의
+선형 스케줄 특수화; cosine 등 다른 스케줄이면 형태가 달라진다).
+
+\textbf{(ii) Token 분해는 정확(근사 아님).} SUBS 는 위치별 독립(mean-field) 복원이며
+absorbing ELBO 에서는 \emph{마스킹된 위치만} 기여하므로 블록 재구성 항이 토큰합으로
+분해된다:
+\begin{equation}
+\log\pth(\mathbf x^b\mid \mathbf x^b_t,\xpre)
+=\sum_{i\in b}\mathbf 1[\text{move}_i]\,\log\pth(\xz^i\mid \xt,\xpre).
+\end{equation}
+그러므로 블록 항은 정확히 토큰별 $1/t$-가중 CE 의 합이고(\code{(nll*move).sum()},
+\code{:456--458}), 식 8 의 $\sum_{b}$ 는 block-diffusion attention
+(\code{get\_block\_diff\_mask}) 하의 전체 학습위치 합으로 실현된다($\xpre$ 는 clean 문맥).
+
+\textbf{(iii) 정규화의 불편성.} \code{move}(마스킹 위치)로만 합하고 분모를
+$|\bLM|$(전체 학습가능 위치)로 두는 것은, $\E_q[\text{move}_i]=t$ 에 의해
+\begin{equation}
+\E_q\!\Big[\textstyle\sum_{i}\text{move}_i\cdot\tfrac{1}{t}\big(-\log\pth^{\,i}\big)\Big]
+=\sum_{i\in\bLM}\big(-\log\pth^{\,i}\big)
+\end{equation}
+이므로 $1/t$ 가중 $\times\,\tfrac{1}{|\bLM|}$ 가 토큰당 ELBO 의 \emph{불편(unbiased)}
+추정이 된다 — 분모가 $|\text{masked}|$ 가 아니라 $|\bLM|$ 인 이유다.
+
+\begin{remark}
+이 대응은 \textbf{mask(흡수) 커널} 전용이다. graph(균일 CTMC) 커널은 식 8 이 아니라
+아래 §의 이산 D3PM ELBO(KL${}+{}$보조 CE${}+{}$연결성 정칙화)로 별도 구현된다.
+\end{remark}
+
 % =====================================================================
 \section{확산 학습 loss — graph (균일 CTMC/D3PM) 커널}
 % =====================================================================

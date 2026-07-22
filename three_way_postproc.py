@@ -28,6 +28,8 @@ if __name__ == "__main__":
     ap.add_argument("-batch", type=int, default=100)
     ap.add_argument("-n_is", type=int, default=100)
     ap.add_argument("-seed", type=int, default=7)
+    ap.add_argument("-order", type=str, default="first_hit", choices=["first_hit", "l2r"],
+                    help="mask within-block reveal order")
     args = ap.parse_args()
 
     device = torch.device("cuda:0")
@@ -102,10 +104,10 @@ if __name__ == "__main__":
             b = real[s:s + args.batch]
             o, d = [p[0] for p in b], [p[-1] for p in b]
             if kw is None:
-                out = model.plan(o, d, use_refine=False)
+                out = model.plan(o, d, use_refine=False, order=args.order)
             else:
                 out = model.plan_guided(o, d, disc, A_dev, deg_ratio, n_is=args.n_is,
-                                        ess_log=ess_log, **kw)
+                                        ess_log=ess_log, order=args.order, **kw)
             planned += out
         ess = float(np.nanmean(ess_log)) if ess_log else None
         p1 = [splice(p) for p in planned]
