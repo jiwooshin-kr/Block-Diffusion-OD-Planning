@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Block-Diffusion OD Planning — v4 후처리 결과 (P1 / P3 / P1+P3)</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Apple SD Gothic Neo", "Noto Sans KR", "Helvetica Neue", Arial, sans-serif; font-size: 10.5px; line-height: 1.55; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.4px; }
+  th, td { border: 1px solid #bbb; padding: 3.5px 6px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  td.num, th.num { text-align: right; }
+  .small { font-size: 8.9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .muted { color: #666; font-style: italic; }
+  .box { background: #f4f7fb; border: 1.5px solid #9fb6d4; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<h1>v4 후처리 결과 — P1 / P3 / P1+P3</h1>
+<p class="small">2026-07-27 · <span class="mono">RESULTS_BD_V4_KO.pdf</span>의 자매 문서로, 그쪽은 동일한 실행을 <b>후처리 없이</b> 보고한다. 여기에 새로 돌린 실험은 없다 — 모든 수치는 이미 그 보고서에 기술된 실행의 후처리 단계다(동일한 v4 EOS 수정 백본, 동일한 판별자/분류기, 동일한 except_0 예약 1,000쌍, seed 7, γ = 1). RAW 보고서를 깔끔하게 유지하기 위해 파일을 분리했다.</p>
+
+<h2>1. P1과 P3가 하는 일, 그리고 표를 읽는 법</h2>
+<ul>
+<li><b>P1 (edge splice)</b>: 생성 경로의 불법 전이 (u, v)를 예외 그래프 A<sub>except0</sub> 상의 최단 우회로 u → v 로 대체한다. 정의상 <b>validity가 1.000</b>이 되고, 끝점은 건드리지 않으므로 <b>arrival은 RAW와 동일</b>하다.</li>
+<li><b>P3 (endpoint patch)</b>: 생성된 끝점에서 실제 목적지까지의 최단경로를 덧붙인다. 정의상 <b>arrival이 1.000</b>이 되고, 다른 곳의 불법 edge는 남으므로 <b>validity는 RAW와 동일</b>하다.</li>
+<li><b>P1+P3</b>: 그 순서로 둘 다 적용 — 모든 방법·모든 블록에서 validity와 arrival이 1.000이다.</li>
+</ul>
+<div class="box"><b>읽을 때 유의:</b> P1+P3에서는 RAW의 두 핵심 지표가 1.000으로 고정되어 정보가 없다. 여전히 구분력을 갖는 컬럼은 <b>EM</b>(실제 최단경로와 정확히 일치), <b>PC</b>(경로 정확도 순위 점수), 그리고 <b>patch</b> — 복구가 삽입해야 했던 평균 hop 수, 즉 최종 경로 중 모델이 아니라 Dijkstra가 만들어낸 분량이다. 생성이 나쁜 방법도 많이 기워 붙이면 EM에서 비슷해질 수 있으므로, patch 컬럼이 그 정직성을 지킨다.</div>
+<p class="small">모든 P1/P3/P1+P3 수치는 평가 실행이 자체적으로 기록한 값이며(<span class="mono">three_way_postproc.py</span>는 raw/P1/P3/P1P3, <span class="mono">eval_dcbg.py</span>는 raw/P1P3 출력), <span class="mono">collect_postproc.py</span>로 수집했다 — 재계산 없음. 원자료: <span class="mono">sets_res/postproc_v4.json</span> (guided 336행 + D-CBG 56행, 누락 0).</p>
+
+<h2>2. fam 0.05 — P1+P3 (전 구간 valid = arrival = 1.000)</h2>
+<h3>2.1 Seen (except_0으로 disc 학습)</h3>
+<table>
+<tr><th>blk</th><th class="num">base EM</th><th class="num">base PC</th><th class="num">base patch</th><th class="num">IW EM</th><th class="num">IW PC</th><th class="num">IW patch</th><th class="num">adj+IW EM</th><th class="num">adj+IW PC</th><th class="num">adj+IW patch</th></tr>
+<tr><td>1</td><td class="num">0.300</td><td class="num">0.452</td><td class="num">5.56</td><td class="num">0.307</td><td class="num">0.459</td><td class="num">5.33</td><td class="num"><b>0.376</b></td><td class="num">0.432</td><td class="num">8.59</td></tr>
+<tr><td>2</td><td class="num">0.267</td><td class="num">0.421</td><td class="num">6.70</td><td class="num">0.325</td><td class="num">0.472</td><td class="num">5.69</td><td class="num"><b>0.382</b></td><td class="num"><b>0.513</b></td><td class="num">5.17</td></tr>
+<tr><td>4</td><td class="num">0.272</td><td class="num">0.436</td><td class="num">5.64</td><td class="num">0.312</td><td class="num">0.467</td><td class="num">5.32</td><td class="num"><b>0.342</b></td><td class="num">0.487</td><td class="num">5.00</td></tr>
+<tr><td>8</td><td class="num">0.253</td><td class="num">0.418</td><td class="num">6.13</td><td class="num">0.300</td><td class="num">0.450</td><td class="num">5.75</td><td class="num"><b>0.323</b></td><td class="num">0.470</td><td class="num">5.47</td></tr>
+<tr><td>16</td><td class="num">0.231</td><td class="num">0.394</td><td class="num">6.71</td><td class="num">0.243</td><td class="num">0.406</td><td class="num">6.35</td><td class="num"><b>0.266</b></td><td class="num">0.429</td><td class="num">5.62</td></tr>
+<tr><td>32</td><td class="num">0.219</td><td class="num">0.380</td><td class="num">7.00</td><td class="num">0.243</td><td class="num">0.404</td><td class="num">6.64</td><td class="num"><b>0.259</b></td><td class="num">0.418</td><td class="num">6.26</td></tr>
+<tr><td>64</td><td class="num">0.194</td><td class="num">0.353</td><td class="num">8.83</td><td class="num">0.211</td><td class="num">0.372</td><td class="num">7.81</td><td class="num"><b>0.230</b></td><td class="num">0.394</td><td class="num">7.40</td></tr>
+</table>
+<h3>2.2 Unseen (except 1–99 학습, zero-shot; base는 §2.1과 동일)</h3>
+<table>
+<tr><th>blk</th><th class="num">base EM</th><th class="num">base PC</th><th class="num">base patch</th><th class="num">IW EM</th><th class="num">IW PC</th><th class="num">IW patch</th><th class="num">adj+IW EM</th><th class="num">adj+IW PC</th><th class="num">adj+IW patch</th></tr>
+<tr><td>1</td><td class="num">0.300</td><td class="num">0.452</td><td class="num">5.56</td><td class="num">0.305</td><td class="num">0.457</td><td class="num">5.33</td><td class="num"><b>0.364</b></td><td class="num">0.419</td><td class="num">8.80</td></tr>
+<tr><td>2</td><td class="num">0.267</td><td class="num">0.421</td><td class="num">6.70</td><td class="num">0.325</td><td class="num">0.474</td><td class="num">5.39</td><td class="num"><b>0.367</b></td><td class="num"><b>0.502</b></td><td class="num">4.95</td></tr>
+<tr><td>4</td><td class="num">0.272</td><td class="num">0.436</td><td class="num">5.64</td><td class="num">0.311</td><td class="num">0.467</td><td class="num">5.36</td><td class="num"><b>0.345</b></td><td class="num">0.488</td><td class="num">5.01</td></tr>
+<tr><td>8</td><td class="num">0.253</td><td class="num">0.418</td><td class="num">6.13</td><td class="num">0.303</td><td class="num">0.451</td><td class="num">5.78</td><td class="num"><b>0.323</b></td><td class="num">0.469</td><td class="num">5.44</td></tr>
+<tr><td>16</td><td class="num">0.231</td><td class="num">0.394</td><td class="num">6.71</td><td class="num">0.251</td><td class="num">0.412</td><td class="num">6.32</td><td class="num"><b>0.272</b></td><td class="num">0.434</td><td class="num">5.60</td></tr>
+<tr><td>32</td><td class="num">0.219</td><td class="num">0.380</td><td class="num">7.00</td><td class="num">0.243</td><td class="num">0.405</td><td class="num">6.61</td><td class="num"><b>0.258</b></td><td class="num">0.418</td><td class="num">6.23</td></tr>
+<tr><td>64</td><td class="num">0.194</td><td class="num">0.353</td><td class="num">8.83</td><td class="num">0.213</td><td class="num">0.373</td><td class="num">7.80</td><td class="num"><b>0.233</b></td><td class="num">0.395</td><td class="num">7.46</td></tr>
+</table>
+<ul class="small">
+<li><b>RAW의 순서가 후처리 후에도 유지된다</b>: 전 블록·양 방식에서 EM 기준 adj+IW &gt; IW &gt; base. guidance는 P1+P3로 대체할 수 있는 것이 아니다 — 더 나쁜 경로를 기워봐야 더 나쁜 최종 경로가 나온다.</li>
+<li><b>adj+IW는 patch도 가장 적다</b>(blk2–64, 예: blk64 7.40 vs base 8.83 hop). EM 우위를 Dijkstra로 산 것이 아니라는 뜻이다. <b>예외는 blk1</b>: adj+IW가 8.59 hop을 필요로 하는데(base 5.56), RAW arrival이 0.567에 그쳐(RAW 보고서 §4.1) P3가 나머지를 걸어야 하기 때문이다 — 그래서 EM은 최고인데 PC(0.432)는 IW(0.459)보다 낮다.</li>
+<li><b>후처리는 블록 간 격차를 압축한다</b>: RAW EM은 블록에 걸쳐 0.129–0.271(base)인데 P1+P3에서는 0.194–0.300 — Dijkstra 복구가 큰 블록의 열화를 일부 흡수하며, 그 대가가 patch에 드러난다(blk64 8.83 vs blk1 5.56 hop).</li>
+<li><b>seen/unseen 격차는 EM ≤0.008</b>로 유지되어, 복구 후에도 zero-shot 전이가 성립한다.</li>
+</ul>
+
+<h2>3. fam 0.05 — P1 단독과 P3 단독</h2>
+<p class="small">두 복구를 분리한 값(EM, seen). <b>P1</b>은 validity를 1.000으로 만들고 arrival은 RAW 그대로, <b>P3</b>는 arrival을 1.000으로 만들고 validity는 RAW 그대로다.</p>
+<table>
+<tr><th>blk</th><th class="num">base P1</th><th class="num">base P3</th><th class="num">IW P1</th><th class="num">IW P3</th><th class="num">adj+IW P1</th><th class="num">adj+IW P3</th></tr>
+<tr><td>1</td><td class="num">0.300</td><td class="num">0.271</td><td class="num">0.307</td><td class="num">0.283</td><td class="num"><b>0.377</b></td><td class="num">0.373</td></tr>
+<tr><td>2</td><td class="num">0.272</td><td class="num">0.229</td><td class="num">0.334</td><td class="num">0.297</td><td class="num"><b>0.402</b></td><td class="num">0.369</td></tr>
+<tr><td>4</td><td class="num">0.278</td><td class="num">0.238</td><td class="num">0.323</td><td class="num">0.285</td><td class="num"><b>0.361</b></td><td class="num">0.315</td></tr>
+<tr><td>8</td><td class="num">0.264</td><td class="num">0.196</td><td class="num">0.313</td><td class="num">0.258</td><td class="num"><b>0.336</b></td><td class="num">0.283</td></tr>
+<tr><td>16</td><td class="num">0.237</td><td class="num">0.177</td><td class="num">0.256</td><td class="num">0.203</td><td class="num"><b>0.288</b></td><td class="num">0.216</td></tr>
+<tr><td>32</td><td class="num">0.220</td><td class="num">0.156</td><td class="num">0.253</td><td class="num">0.194</td><td class="num"><b>0.276</b></td><td class="num">0.204</td></tr>
+<tr><td>64</td><td class="num">0.202</td><td class="num">0.125</td><td class="num">0.225</td><td class="num">0.152</td><td class="num"><b>0.246</b></td><td class="num">0.168</td></tr>
+</table>
+<ul class="small">
+<li><b>P1이 거의 모든 일을 한다</b>: blk4 seen에서 adj+IW는 P1 단독 0.361 vs P1+P3 0.342 — P3를 더하면 오히려 EM이 <i>내려간다</i>. arrival을 강제하느라 hop을 덧붙이면 정확한 길이 일치가 깨지기 때문이며, 모든 방법·블록에서 같은 양상이다.</li>
+<li><b>P3 단독이 가장 약한 복구</b>(blk64 base 0.125 vs RAW 0.129): 불법 edge를 고치지 않은 채 끝점만 기우면 경로는 여전히 invalid이고, EM은 validity를 요구한다.</li>
+<li>따라서 쓸모 있는 구성은 <b>P1 단독</b>(EM 최고) 또는 <b>P1+P3</b>(EM은 약간 낮지만 arrival 보장)이며, P3 단독은 열등하다.</li>
+</ul>
+
+<h2>4. fam 0.1 — P1+P3</h2>
+<p class="small">edge 제거 비율 0.1, 즉 제거 edge가 2배. 동일 형식으로 EM / PC / patch, seen과 unseen.</p>
+<table>
+<tr><th>blk</th><th class="num">base EM</th><th class="num">IW EM</th><th class="num">adj+IW EM</th><th class="num">base PC</th><th class="num">IW PC</th><th class="num">adj+IW PC</th><th class="num">base patch</th><th class="num">IW patch</th><th class="num">adj+IW patch</th></tr>
+<tr><td>1</td><td class="num"><b>0.147</b></td><td class="num">0.142</td><td class="num">0.143</td><td class="num"><b>0.262</b></td><td class="num">0.260</td><td class="num">0.178</td><td class="num">14.65</td><td class="num">13.86</td><td class="num">17.03</td></tr>
+<tr><td>2</td><td class="num">0.135</td><td class="num">0.153</td><td class="num"><b>0.188</b></td><td class="num">0.251</td><td class="num">0.271</td><td class="num"><b>0.298</b></td><td class="num">15.55</td><td class="num">14.53</td><td class="num">13.21</td></tr>
+<tr><td>4</td><td class="num">0.119</td><td class="num">0.145</td><td class="num"><b>0.166</b></td><td class="num">0.240</td><td class="num">0.263</td><td class="num"><b>0.283</b></td><td class="num">14.52</td><td class="num">14.46</td><td class="num">12.94</td></tr>
+<tr><td>8</td><td class="num">0.118</td><td class="num">0.139</td><td class="num"><b>0.150</b></td><td class="num">0.235</td><td class="num">0.256</td><td class="num"><b>0.273</b></td><td class="num">15.81</td><td class="num">15.44</td><td class="num">13.88</td></tr>
+<tr><td>16</td><td class="num">0.103</td><td class="num">0.119</td><td class="num"><b>0.138</b></td><td class="num">0.224</td><td class="num">0.235</td><td class="num"><b>0.260</b></td><td class="num">16.32</td><td class="num">15.22</td><td class="num">13.74</td></tr>
+<tr><td>32</td><td class="num"><b>0.111</b></td><td class="num">0.104</td><td class="num">0.109</td><td class="num">0.223</td><td class="num">0.221</td><td class="num"><b>0.236</b></td><td class="num">16.90</td><td class="num">16.40</td><td class="num">14.82</td></tr>
+<tr><td>64</td><td class="num">0.089</td><td class="num">0.108</td><td class="num"><b>0.132</b></td><td class="num">0.210</td><td class="num">0.227</td><td class="num"><b>0.255</b></td><td class="num">17.49</td><td class="num">17.20</td><td class="num">15.23</td></tr>
+</table>
+<p class="small">unseen은 전 블록에서 seen과 EM ≤0.004 차이(blk1 0.147/0.141/0.144, blk64 0.089/0.105/0.133).</p>
+<ul class="small">
+<li><b>이제 복구가 출력을 지배한다</b>: patch가 13–17 hop인데 실제 경로 길이가 ~23이므로, 최종 경로의 절반 이상이 모델이 아니라 Dijkstra의 산물이다. valid = arrival = 1.000임에도 EM은 0.09–0.19에 그친다. 이 난도에서는 후처리 수치가 생성기보다 복구에 대해 더 많은 것을 말한다.</li>
+<li><b>adj+IW는 여전히 전 블록 PC 1위</b>이고 EM도 blk1·blk32를 제외하면 앞선다. blk1의 이상치는 또 arrival 붕괴(RAW 0.250) 탓으로, 17 hop 패치를 강요당해 PC가 0.178까지 떨어진다 — EM은 경쟁력이 있는데도 표에서 가장 나쁜 칸이다.</li>
+<li><b>큰 블록에서는 복구 후에도 guidance가 더 중요해진다</b>(blk64 EM 0.089 → 0.132, 상대 +48%) — 후처리가 격차를 좁혔던 fam 0.05와 정반대 양상이다.</li>
+</ul>
+
+<h2>5. D-CBG — P1+P3 (fam 0.05, γ = 1)</h2>
+<p class="small"><span class="mono">eval_dcbg.py</span>는 raw와 P1+P3만 출력한다(P1/P3 단독 없음). EM / PC / patch이며, §2.1의 IW·adj+IW 컬럼을 참조용으로 병기했다.</p>
+<table>
+<tr><th>blk</th><th class="num">D-CBG exact EM (seen/unseen)</th><th class="num">D-CBG 1차근사 EM (seen/unseen)</th><th class="num">IW EM (seen)</th><th class="num">adj+IW EM (seen)</th><th class="num">D-CBG exact PC / patch (seen)</th></tr>
+<tr><td>1</td><td class="num">0.307 / 0.302</td><td class="num">0.301 / 0.300</td><td class="num">0.307</td><td class="num"><b>0.376</b></td><td class="num">0.460 / 5.19</td></tr>
+<tr><td>2</td><td class="num">0.285 / 0.282</td><td class="num">0.269 / 0.268</td><td class="num">0.325</td><td class="num"><b>0.382</b></td><td class="num">0.438 / 6.27</td></tr>
+<tr><td>4</td><td class="num">0.282 / 0.279</td><td class="num">0.276 / 0.274</td><td class="num">0.312</td><td class="num"><b>0.342</b></td><td class="num">0.443 / 5.52</td></tr>
+<tr><td>8</td><td class="num">0.256 / 0.260</td><td class="num">0.253 / 0.252</td><td class="num">0.300</td><td class="num"><b>0.323</b></td><td class="num">0.422 / 6.03</td></tr>
+<tr><td>16</td><td class="num">0.245 / 0.241</td><td class="num">0.232 / 0.232</td><td class="num">0.243</td><td class="num"><b>0.266</b></td><td class="num">0.407 / 6.41</td></tr>
+<tr><td>32</td><td class="num">0.235 / 0.224</td><td class="num">0.219 / 0.219</td><td class="num">0.243</td><td class="num"><b>0.259</b></td><td class="num">0.400 / 6.47</td></tr>
+<tr><td>64</td><td class="num">0.200 / 0.200</td><td class="num">0.195 / 0.194</td><td class="num">0.211</td><td class="num"><b>0.230</b></td><td class="num">0.362 / 8.06</td></tr>
+</table>
+<ul class="small">
+<li><b>RAW의 결론이 후처리로 바뀌지 않는다</b>: 거의 전 블록에서 EM 기준 adj+IW &gt; IW ≥ D-CBG exact &gt; D-CBG 1차근사 ≈ base. (예외는 blk16/32로 D-CBG exact가 IW를 EM 0.002 앞서는데, 실행 간 노이즈 범위다.)</li>
+<li><b>1차근사는 복구 후에도 base와 구분되지 않는다</b>(blk64 0.195 vs base 0.194; blk4 0.276 vs 0.272) — RAW 보고서 §5.3–§5.4의 결론이 후처리 지표에서도 확인된다.</li>
+<li>복구 후 D-CBG의 seen/unseen 격차는 EM ≤0.011로, 이번 라운드의 다른 결과들과 일관된다.</li>
+</ul>
+
+<h2>6. 비고</h2>
+<ul class="small">
+<li>P1/P3는 예외 그래프 G<sub>except0</sub> 상에서 <span class="mono">networkx.shortest_path</span>를 쓰며, 경로가 없으면 해당 구간을 그대로 둔다(드물며, 이번 실행에서는 그런 실패가 없었기에 validity가 1.000에 근접이 아니라 정확히 1.000이다).</li>
+<li><b>patch</b>는 복구가 <i>추가한</i> hop 수의 평균으로, 1,000경로 전체에 대해 평균한 값이다(RAW는 정의상 0.00).</li>
+<li>출처: <span class="mono">sets_log/v4_eval_job*.log</span>(guided 336행), <span class="mono">sets_log/v4_dcbgeval_job*.log</span>(D-CBG 56행) → <span class="mono">collect_postproc.py</span> → <span class="mono">sets_res/postproc_v4.json</span>.</li>
+<li>여기 모든 표의 RAW 대응은 <span class="mono">RESULTS_BD_V4_KO.pdf</span> §4(fam 0.05), §5(D-CBG), §6(fam 0.1)에 있다. 판별자 수준 분석은 <span class="mono">DISC_VALIDITY_KO.pdf</span>.</li>
+</ul>
+</body>
+</html>

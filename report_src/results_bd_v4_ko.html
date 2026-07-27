@@ -33,7 +33,7 @@
 <p class="small"><b>blk64는 구조적으로 불변</b>: 이 데이터셋에 L=63/127인 경로가 사실상 없어(경계 비율 ≈ 0.000) 수정이 blk64 학습 샘플을 하나도 건드리지 않고, 고정 시드 학습이라 v4 blk64는 v2와 동일한 수치를 재현한다. 완전성을 위해 유지한다.</p>
 
 <h2>2. Unconditional 생성 — 수정 전/후</h2>
-<p class="small">백본당 개방 생성 20,000개(<span class="mono">plan(None,None)</span>; ori+dst 동시 dropout 10%로 유효), NORMAL 세계 기준 채점. 실제 참조: 길이 23.2±9.8. <b>valid</b>=모든 edge 유효; <b>invE</b>=invalid edge 비율; <b>KS</b>=길이분포 KS 거리; <b>cap%</b>=캔버스 캡 도달(종료 실패); <b>novel</b>=실제 집합에 그대로 존재하지 않는 비율; <b>bres</b>=경계 잔여류 비율 생성/실제 — 수정 전 END 감독이 결핍됐던 길이 부류. 회색은 v2.</p>
+<p class="small">백본당 개방 생성 20,000개(<span class="mono">plan(None,None)</span>; ori+dst 동시 dropout 10%로 유효) — 7블록 합계 140,000경로 — 를 NORMAL 세계 기준으로 채점. 실제 참조: 길이 23.2±9.8. <b>valid</b>=모든 edge 유효; <b>invE</b>=invalid edge 비율; <b>KS</b>=길이분포 KS 거리; <b>cap%</b>=캔버스 캡 도달(종료 실패); <b>novel</b>=실제 집합에 그대로 존재하지 않는 비율; <b>bres</b>=경계 잔여류 비율 생성/실제 — 수정 전 END 감독이 결핍됐던 길이 부류. 회색은 v2.</p>
 <table>
 <tr><th>blk</th><th class="num">valid v4 (v2)</th><th class="num">invE v4 (v2)</th><th class="num">len v4 (v2)</th><th class="num">KS v4 (v2)</th><th class="num">cap% v4 (v2)</th><th class="num">novel v4 (v2)</th><th class="num">bres 생성/실제 v4 (v2 생성)</th></tr>
 <tr><td>1</td><td class="num"><b>0.870</b> <span class="muted">(0.000)</span></td><td class="num"><b>2.29%</b> <span class="muted">(50.47%)</span></td><td class="num">25.2 <span class="muted">(101.0)</span></td><td class="num">0.045 <span class="muted">(1.000)</span></td><td class="num">0.9 <span class="muted">(100.0)</span></td><td class="num">0.396 <span class="muted">(1.000)</span></td><td class="num">—</td></tr>
@@ -51,6 +51,25 @@
 <li><b>유의점</b>: blk8(0.382→0.325), blk32(0.232→0.141)의 valid 하락은 단일 시드 학습 분산과 분리 불가; 다만 blk32의 길이 보정은 크게 개선(KS 0.278→0.120, 평균 16.7→25.6).</li>
 </ul>
 
+<h3>2a. 길이 분포와 edge 분포 일치도 (JSEV)</h3>
+<p class="small">블록당 동일한 생성 20,000개를 <b>전체</b> 실제 NORMAL 집합(최단경로 1,930,710개 — 참조 행)과 비교. <b>KS</b>는 생성/실제 길이 분포 간 Kolmogorov–Smirnov 거리. <b>JSEV</b>는 프로젝트 표준 edge 분포 지표(<span class="mono">utils/evaluate_new.py::Evaluator.calculate_divergences</span>)로, 전체 V × V 격자에서 실제/생성 방향 edge 빈도 분포 간 Jensen–Shannon divergence이며 단위는 <b>nats</b>다(scipy <span class="mono">rel_entr</span>; ln 2로 나누면 bits). <b>R²</b>는 동일한 평탄화 edge 분포에서 계산하고, <b>Spearman ρ</b>는 edge 빈도의 순위 상관으로 <i>masked</i>(실제 빈도가 0이 아닌 칸) / <i>전체</i> 칸 순으로 보고한다. JSEV는 낮을수록, R²·ρ는 높을수록 좋다.</p>
+<table>
+<tr><th>blk</th><th class="num">길이 평균 ± 표준편차</th><th class="num">중앙값</th><th class="num">p5 – p95</th><th class="num">KS</th><th class="num">JSEV (nats)</th><th class="num">R²</th><th class="num">Spearman ρ (masked / 전체)</th></tr>
+<tr><td><b>real (1,930,710)</b></td><td class="num"><b>23.21 ± 9.80</b></td><td class="num"><b>23</b></td><td class="num"><b>8 – 40</b></td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td>1</td><td class="num">25.18 ± 12.51</td><td class="num">24</td><td class="num">9 – 43</td><td class="num">0.045</td><td class="num"><b>0.0147</b></td><td class="num">0.985</td><td class="num">0.958 / 0.624</td></tr>
+<tr><td>2</td><td class="num">23.30 ± 9.66</td><td class="num">23</td><td class="num">8 – 40</td><td class="num">0.010</td><td class="num"><b>0.0169</b></td><td class="num">0.984</td><td class="num">0.972 / 0.579</td></tr>
+<tr><td>4</td><td class="num">23.76 ± 9.77</td><td class="num">23</td><td class="num">9 – 40</td><td class="num">0.026</td><td class="num"><b>0.0147</b></td><td class="num">0.984</td><td class="num">0.965 / 0.568</td></tr>
+<tr><td>8</td><td class="num">23.83 ± 9.85</td><td class="num">23</td><td class="num">9 – 41</td><td class="num">0.023</td><td class="num"><b>0.0283</b></td><td class="num">0.973</td><td class="num">0.959 / 0.457</td></tr>
+<tr><td>16</td><td class="num">24.40 ± 9.78</td><td class="num">24</td><td class="num">9 – 41</td><td class="num">0.056</td><td class="num"><b>0.0482</b></td><td class="num">0.895</td><td class="num">0.931 / 0.420</td></tr>
+<tr><td>32</td><td class="num">25.61 ± 10.15</td><td class="num">26</td><td class="num">8 – 42</td><td class="num">0.120</td><td class="num"><b>0.0576</b></td><td class="num">0.854</td><td class="num">0.922 / 0.413</td></tr>
+<tr><td>64</td><td class="num">24.07 ± 8.94</td><td class="num">24</td><td class="num">10 – 39</td><td class="num">0.056</td><td class="num"><b>0.0654</b></td><td class="num">0.875</td><td class="num">0.910 / 0.389</td></tr>
+</table>
+<ul class="small">
+<li><b>길이는 전 블록에서 잘 맞는다</b>: 평균이 실제 23.21과 2.4 이내, 중앙값은 3 이내이며 5–95% 폭도 실제 8–40을 근접 추종한다. blk2가 거의 정확하고(23.30 ± 9.66, KS 0.010), blk1은 꼬리가 가장 두껍다(std 12.51), blk32는 길이 보정이 가장 나쁘다(KS 0.120). 참고로 수정 전 blk1 백본은 101 ± 0.00(전량 캡)이었다 — §2 참조.</li>
+<li><b>edge 분포 충실도는 블록 크기에 따라 단조 악화</b>: JSEV 0.0147(blk1, blk4) → 0.0654(blk64), R² 0.985 → 0.875. 작은 블록이 <i>어떤 도로가 얼마나 자주 쓰이는지</i>를 훨씬 충실히 재현한다.</li>
+<li><b>두 Spearman 컬럼이 두 가지 실패 유형을 분리한다</b>: 실제로 등장하는 edge에 한정하면 사용 빈도 순위를 전 블록에서 매우 잘 재현하지만(ρ 0.91–0.97), V² 전체 칸에서는 상관이 훨씬 낮고(0.39–0.62) 블록이 커질수록 떨어진다. 큰 블록이 실제 데이터가 쓰지 않는 edge에 확률 질량을 쓰기 때문이며, §2의 불법 edge 비율(2.3% → 11.4%)과 같은 현상이다.</li>
+<li>edge 분포의 RMSE / MAE도 같은 순서를 따르며(blk1 2.83e-06 / 8.48e-08 → blk64 8.23e-06 / 2.38e-07) <span class="mono">sets_res/uncond_jsev_v4.json</span>에 기록되어 있다.</li>
+</ul>
 <h3>2b. Unconditional EM/PC — 각 샘플의 양 끝점을 자신의 OD로</h3>
 <p class="small">EM/PC는 <i>주어진</i> OD가 필요 없다: <span class="mono">evaluate_em_pc</span>는 생성 경로 자신의 (start, end)를 OD로 삼아 참조 최단경로 데이터에서 조회한다. 학습 데이터가 최단경로이므로 <b>uncond EM = "샘플이 자기 양 끝점 기준 최단경로인가"</b> — 분포 충실도 지표다. OD 커버리지(생성된 OD가 참조에 존재하는 비율)는 전 블록 ≈1.0이라 측정이 깨끗하다. 블록당 3,000개, seed 7. <b>novel∧EM</b>이 합성 데이터의 화폐: 알려진 OD의 <i>새로운</i> 최단경로, 즉 데이터셋에 없는 등장(等長) 대안 경로.</p>
 <table>
@@ -68,7 +87,7 @@
 <li><b>Novelty 해석 주의</b>: 이 데이터는 최단경로라 OD당 정답이 거의 유일 — <i>완벽한</i> 생성 모델일수록 novelty가 <i>낮게</i> 나온다. blk1의 복사는 부분적으로 분포를 잘 배운 결과이며, novelty 축 자체가 큰 블록에 유리하게 기울어 있음에도 그 우위는 절대값 ≤1%p다.</li>
 </ul>
 <h3>2c. Valid 생성물의 다양성 — 직관 검증</h3>
-<p class="small">원시 novelty는 블록과 함께 상승한다(0.406 → 0.973; 블록 내 mean-field 샘플링의 조합 다양성) — 그러나 invalid 경로의 다양성은 노이즈다. valid 부분집합으로 제한하고 동일 크기 실제 표본과 비교(지표: distinct-OD 비율, 사용된 고유 edge 수, edge 사용 Shannon 엔트로피, edge 집합의 평균 pairwise Jaccard 유사도 — 높을수록 서로 비슷):</p>
+<p class="small">원시 novelty는 블록과 함께 상승한다(0.406 → 0.973; 블록 내 mean-field 샘플링의 조합 다양성) — 그러나 invalid 경로의 다양성은 노이즈다. valid 부분집합으로 제한하고 동일 크기 실제 표본과 비교(지표: distinct-OD 비율, 사용된 고유 edge 수, edge 사용 Shannon 엔트로피, edge 집합의 평균 pairwise Jaccard 유사도 — 높을수록 서로 비슷). <b>n valid</b>는 그 부분집합의 크기다 — 생성 20,000개 중 모든 edge가 합법인 개수이자 각 행이 계산된 표본 수.</p>
 <table>
 <tr><th></th><th class="num">n valid</th><th class="num">distinct OD</th><th class="num">edge 지지집합</th><th class="num">edge 엔트로피</th><th class="num">pairwise Jaccard</th></tr>
 <tr><td><b>real (20k)</b></td><td class="num">20,000</td><td class="num">1.000</td><td class="num"><b>3,856</b></td><td class="num"><b>10.62 b</b></td><td class="num"><b>0.0124</b></td></tr>
@@ -279,6 +298,7 @@
 
 <h2>8. 비고 · 출처</h2>
 <ul class="small">
+<li><b>본 보고서의 모든 수치는 RAW</b>다(P1/P3 없음, refine 없음 — conditional 스윕은 <span class="mono">use_refine=False</span>). §4·§5·§6의 후처리 대응 결과는 별도 파일 <span class="mono">RESULTS_BD_V4_POSTPROC_KO.pdf</span>에 있다.</li>
 <li>D-CBG 라운드(§5): <span class="mono">run_v4_dcbg_train.sh</span>(분류기 28개, model-negative만) → <span class="mono">run_v4_dcbg_eval.sh</span>(평가 28개, exact + first-order, γ=1) 및 <span class="mono">time_guidance.py</span>; 산출물 <span class="mono">sets_res/dcbg_table_v4_f005.json</span>, <span class="mono">guidance_timing_v4.json</span>.</li>
 <li>파이프라인: <span class="mono">run_v4_all.sh</span>, 단일 tmux 체인, 2026-07-27 00:48–04:22 KST (Stage A 재학습 ≈1h40m; guided 평가 28개 ≈1h). 원자료: <span class="mono">sets_res/va_table_v4_f005.json</span>, <span class="mono">va_table_v4_f01.json</span>, <span class="mono">uncond_pool_eval_v4.json</span>, <span class="mono">disc_gen_eval_f{005,01}{,_data}_v4.json</span>, 로그 <span class="mono">sets_log/v4_*.log</span>.</li>
 <li>학습은 캔버스 수정 외 v2와 동일: <span class="mono">train_porto_bd.sh mask B gpu v4</span> (1 epoch, bs 32, lr 5e-4, drop_cond 0.1 — ori/dst는 항상 <i>동시에</i> drop, 개별 drop 없음).</li>

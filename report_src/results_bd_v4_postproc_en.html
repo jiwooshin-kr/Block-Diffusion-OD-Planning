@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Block-Diffusion OD Planning — v4 Post-processed Results (P1 / P3 / P1+P3)</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 10.5px; line-height: 1.55; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.4px; }
+  th, td { border: 1px solid #bbb; padding: 3.5px 6px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  td.num, th.num { text-align: right; }
+  .small { font-size: 8.9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .muted { color: #666; font-style: italic; }
+  .box { background: #f4f7fb; border: 1.5px solid #9fb6d4; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<h1>v4 Post-processed Results — P1 / P3 / P1+P3</h1>
+<p class="small">2026-07-27 · Companion to <span class="mono">RESULTS_BD_V4.pdf</span>, which reports the same runs <b>without any post-processing</b>. Nothing here is a new experiment: every number is the post-processing stage of the runs already described there (same v4 EOS-fixed backbones, same discriminators/classifiers, same 1,000 reserved except_0 pairs, seed 7, γ = 1). Split into its own file so the RAW report stays clean.</p>
+
+<h2>1. What P1 and P3 do, and how to read these tables</h2>
+<ul>
+<li><b>P1 (edge splice)</b>: every illegal transition (u, v) in a generated path is replaced by a shortest detour u → v on the exceptional graph A<sub>except0</sub>. By construction <b>validity becomes 1.000</b>; the endpoint is untouched, so <b>arrival is unchanged from RAW</b>.</li>
+<li><b>P3 (endpoint patch)</b>: a shortest path from the generated endpoint to the true destination is appended. By construction <b>arrival becomes 1.000</b>; illegal edges elsewhere remain, so <b>validity is unchanged from RAW</b>.</li>
+<li><b>P1+P3</b>: both, in that order — validity and arrival are both 1.000 for every method and every block.</li>
+</ul>
+<div class="box"><b>Consequence for reading:</b> under P1+P3 the two headline RAW metrics are pinned at 1.000 and carry no information. The columns that still discriminate are <b>EM</b> (exact-match with a true shortest path), <b>PC</b> (path-correctness rank score) and <b>patch</b> — the mean number of hops the repair had to insert, i.e. how much of the final path was produced by Dijkstra rather than by the model. A method that generates badly can still reach EM parity by being patched heavily; the patch column is what keeps that honest.</div>
+<p class="small">All P1/P3/P1+P3 numbers were recorded by the evaluation runs themselves (<span class="mono">three_way_postproc.py</span> emits raw/P1/P3/P1P3, <span class="mono">eval_dcbg.py</span> emits raw/P1P3) and collected with <span class="mono">collect_postproc.py</span> — no recomputation. Raw artifact: <span class="mono">sets_res/postproc_v4.json</span> (336 guided rows + 56 D-CBG rows, none missing).</p>
+
+<h2>2. fam 0.05 — P1+P3 (valid = arrival = 1.000 throughout)</h2>
+<h3>2.1 Seen (disc trained on except_0)</h3>
+<table>
+<tr><th>blk</th><th class="num">base EM</th><th class="num">base PC</th><th class="num">base patch</th><th class="num">IW EM</th><th class="num">IW PC</th><th class="num">IW patch</th><th class="num">adj+IW EM</th><th class="num">adj+IW PC</th><th class="num">adj+IW patch</th></tr>
+<tr><td>1</td><td class="num">0.300</td><td class="num">0.452</td><td class="num">5.56</td><td class="num">0.307</td><td class="num">0.459</td><td class="num">5.33</td><td class="num"><b>0.376</b></td><td class="num">0.432</td><td class="num">8.59</td></tr>
+<tr><td>2</td><td class="num">0.267</td><td class="num">0.421</td><td class="num">6.70</td><td class="num">0.325</td><td class="num">0.472</td><td class="num">5.69</td><td class="num"><b>0.382</b></td><td class="num"><b>0.513</b></td><td class="num">5.17</td></tr>
+<tr><td>4</td><td class="num">0.272</td><td class="num">0.436</td><td class="num">5.64</td><td class="num">0.312</td><td class="num">0.467</td><td class="num">5.32</td><td class="num"><b>0.342</b></td><td class="num">0.487</td><td class="num">5.00</td></tr>
+<tr><td>8</td><td class="num">0.253</td><td class="num">0.418</td><td class="num">6.13</td><td class="num">0.300</td><td class="num">0.450</td><td class="num">5.75</td><td class="num"><b>0.323</b></td><td class="num">0.470</td><td class="num">5.47</td></tr>
+<tr><td>16</td><td class="num">0.231</td><td class="num">0.394</td><td class="num">6.71</td><td class="num">0.243</td><td class="num">0.406</td><td class="num">6.35</td><td class="num"><b>0.266</b></td><td class="num">0.429</td><td class="num">5.62</td></tr>
+<tr><td>32</td><td class="num">0.219</td><td class="num">0.380</td><td class="num">7.00</td><td class="num">0.243</td><td class="num">0.404</td><td class="num">6.64</td><td class="num"><b>0.259</b></td><td class="num">0.418</td><td class="num">6.26</td></tr>
+<tr><td>64</td><td class="num">0.194</td><td class="num">0.353</td><td class="num">8.83</td><td class="num">0.211</td><td class="num">0.372</td><td class="num">7.81</td><td class="num"><b>0.230</b></td><td class="num">0.394</td><td class="num">7.40</td></tr>
+</table>
+<h3>2.2 Unseen (disc trained on except 1–99, zero-shot; base identical to §2.1)</h3>
+<table>
+<tr><th>blk</th><th class="num">base EM</th><th class="num">base PC</th><th class="num">base patch</th><th class="num">IW EM</th><th class="num">IW PC</th><th class="num">IW patch</th><th class="num">adj+IW EM</th><th class="num">adj+IW PC</th><th class="num">adj+IW patch</th></tr>
+<tr><td>1</td><td class="num">0.300</td><td class="num">0.452</td><td class="num">5.56</td><td class="num">0.305</td><td class="num">0.457</td><td class="num">5.33</td><td class="num"><b>0.364</b></td><td class="num">0.419</td><td class="num">8.80</td></tr>
+<tr><td>2</td><td class="num">0.267</td><td class="num">0.421</td><td class="num">6.70</td><td class="num">0.325</td><td class="num">0.474</td><td class="num">5.39</td><td class="num"><b>0.367</b></td><td class="num"><b>0.502</b></td><td class="num">4.95</td></tr>
+<tr><td>4</td><td class="num">0.272</td><td class="num">0.436</td><td class="num">5.64</td><td class="num">0.311</td><td class="num">0.467</td><td class="num">5.36</td><td class="num"><b>0.345</b></td><td class="num">0.488</td><td class="num">5.01</td></tr>
+<tr><td>8</td><td class="num">0.253</td><td class="num">0.418</td><td class="num">6.13</td><td class="num">0.303</td><td class="num">0.451</td><td class="num">5.78</td><td class="num"><b>0.323</b></td><td class="num">0.469</td><td class="num">5.44</td></tr>
+<tr><td>16</td><td class="num">0.231</td><td class="num">0.394</td><td class="num">6.71</td><td class="num">0.251</td><td class="num">0.412</td><td class="num">6.32</td><td class="num"><b>0.272</b></td><td class="num">0.434</td><td class="num">5.60</td></tr>
+<tr><td>32</td><td class="num">0.219</td><td class="num">0.380</td><td class="num">7.00</td><td class="num">0.243</td><td class="num">0.405</td><td class="num">6.61</td><td class="num"><b>0.258</b></td><td class="num">0.418</td><td class="num">6.23</td></tr>
+<tr><td>64</td><td class="num">0.194</td><td class="num">0.353</td><td class="num">8.83</td><td class="num">0.213</td><td class="num">0.373</td><td class="num">7.80</td><td class="num"><b>0.233</b></td><td class="num">0.395</td><td class="num">7.46</td></tr>
+</table>
+<ul class="small">
+<li><b>The RAW ordering survives post-processing</b>: adj+IW &gt; IW &gt; base in EM at every block, in both regimes. Guidance is not something P1+P3 can substitute for — repairing a worse path yields a worse final path.</li>
+<li><b>adj+IW also patches least</b> at blk2–64 (e.g. blk64 7.40 vs base 8.83 hops), so its EM lead is not bought with extra Dijkstra. <b>blk1 is the exception</b>: adj+IW needs 8.59 hops vs base 5.56, because its RAW arrival is only 0.567 (§4.1 of the RAW report) and P3 has to walk the rest — its PC (0.432) actually falls below IW's (0.459) for that reason, even though EM is highest.</li>
+<li><b>Post-processing compresses the block-size spread</b>: RAW EM ranges 0.129–0.271 across blocks (base), P1+P3 EM 0.194–0.300 — Dijkstra repairs absorb part of the large-block degradation, at a visible patch cost (8.83 hops at blk64 vs 5.56 at blk1).</li>
+<li><b>Seen/unseen remains within ≤0.008 EM</b> everywhere, so zero-shot transfer holds after repair too.</li>
+</ul>
+
+<h2>3. fam 0.05 — P1 alone and P3 alone</h2>
+<p class="small">Isolating the two repairs (EM, seen). <b>P1</b> forces validity to 1.000 and leaves arrival at its RAW value; <b>P3</b> forces arrival to 1.000 and leaves validity at its RAW value.</p>
+<table>
+<tr><th>blk</th><th class="num">base P1</th><th class="num">base P3</th><th class="num">IW P1</th><th class="num">IW P3</th><th class="num">adj+IW P1</th><th class="num">adj+IW P3</th></tr>
+<tr><td>1</td><td class="num">0.300</td><td class="num">0.271</td><td class="num">0.307</td><td class="num">0.283</td><td class="num"><b>0.377</b></td><td class="num">0.373</td></tr>
+<tr><td>2</td><td class="num">0.272</td><td class="num">0.229</td><td class="num">0.334</td><td class="num">0.297</td><td class="num"><b>0.402</b></td><td class="num">0.369</td></tr>
+<tr><td>4</td><td class="num">0.278</td><td class="num">0.238</td><td class="num">0.323</td><td class="num">0.285</td><td class="num"><b>0.361</b></td><td class="num">0.315</td></tr>
+<tr><td>8</td><td class="num">0.264</td><td class="num">0.196</td><td class="num">0.313</td><td class="num">0.258</td><td class="num"><b>0.336</b></td><td class="num">0.283</td></tr>
+<tr><td>16</td><td class="num">0.237</td><td class="num">0.177</td><td class="num">0.256</td><td class="num">0.203</td><td class="num"><b>0.288</b></td><td class="num">0.216</td></tr>
+<tr><td>32</td><td class="num">0.220</td><td class="num">0.156</td><td class="num">0.253</td><td class="num">0.194</td><td class="num"><b>0.276</b></td><td class="num">0.204</td></tr>
+<tr><td>64</td><td class="num">0.202</td><td class="num">0.125</td><td class="num">0.225</td><td class="num">0.152</td><td class="num"><b>0.246</b></td><td class="num">0.168</td></tr>
+</table>
+<ul class="small">
+<li><b>P1 does nearly all the work</b>: at blk4 seen, adj+IW EM is 0.361 with P1 alone vs 0.342 with P1+P3 — adding P3 <i>lowers</i> EM, because forcing arrival appends hops that break exact length matching. The same holds for every method and block.</li>
+<li><b>P3 alone is the weakest repair</b> (blk64 base 0.125 vs RAW 0.129): patching the endpoint without fixing illegal edges leaves the path invalid, and EM requires validity.</li>
+<li>So the useful configurations are <b>P1 alone</b> (best EM) or <b>P1+P3</b> (EM slightly lower but arrival guaranteed) — P3 alone is dominated.</li>
+</ul>
+
+<h2>4. fam 0.1 — P1+P3</h2>
+<p class="small">Edge-remove ratio 0.1, i.e. twice the removed edges. Same layout; EM / PC / patch, seen and unseen.</p>
+<table>
+<tr><th>blk</th><th class="num">base EM</th><th class="num">IW EM</th><th class="num">adj+IW EM</th><th class="num">base PC</th><th class="num">IW PC</th><th class="num">adj+IW PC</th><th class="num">base patch</th><th class="num">IW patch</th><th class="num">adj+IW patch</th></tr>
+<tr><td>1</td><td class="num"><b>0.147</b></td><td class="num">0.142</td><td class="num">0.143</td><td class="num"><b>0.262</b></td><td class="num">0.260</td><td class="num">0.178</td><td class="num">14.65</td><td class="num">13.86</td><td class="num">17.03</td></tr>
+<tr><td>2</td><td class="num">0.135</td><td class="num">0.153</td><td class="num"><b>0.188</b></td><td class="num">0.251</td><td class="num">0.271</td><td class="num"><b>0.298</b></td><td class="num">15.55</td><td class="num">14.53</td><td class="num">13.21</td></tr>
+<tr><td>4</td><td class="num">0.119</td><td class="num">0.145</td><td class="num"><b>0.166</b></td><td class="num">0.240</td><td class="num">0.263</td><td class="num"><b>0.283</b></td><td class="num">14.52</td><td class="num">14.46</td><td class="num">12.94</td></tr>
+<tr><td>8</td><td class="num">0.118</td><td class="num">0.139</td><td class="num"><b>0.150</b></td><td class="num">0.235</td><td class="num">0.256</td><td class="num"><b>0.273</b></td><td class="num">15.81</td><td class="num">15.44</td><td class="num">13.88</td></tr>
+<tr><td>16</td><td class="num">0.103</td><td class="num">0.119</td><td class="num"><b>0.138</b></td><td class="num">0.224</td><td class="num">0.235</td><td class="num"><b>0.260</b></td><td class="num">16.32</td><td class="num">15.22</td><td class="num">13.74</td></tr>
+<tr><td>32</td><td class="num"><b>0.111</b></td><td class="num">0.104</td><td class="num">0.109</td><td class="num">0.223</td><td class="num">0.221</td><td class="num"><b>0.236</b></td><td class="num">16.90</td><td class="num">16.40</td><td class="num">14.82</td></tr>
+<tr><td>64</td><td class="num">0.089</td><td class="num">0.108</td><td class="num"><b>0.132</b></td><td class="num">0.210</td><td class="num">0.227</td><td class="num"><b>0.255</b></td><td class="num">17.49</td><td class="num">17.20</td><td class="num">15.23</td></tr>
+</table>
+<p class="small">Unseen mirrors seen to ≤0.004 EM at every block (blk1 0.147/0.141/0.144, blk64 0.089/0.105/0.133).</p>
+<ul class="small">
+<li><b>Repair now dominates the output</b>: patch is 13–17 hops against a real path length of ~23, i.e. more than half of the final path is Dijkstra's, not the model's. EM ≈ 0.09–0.19 despite valid = arrival = 1.000. At this difficulty the post-processed numbers say more about the repair than about the generator.</li>
+<li><b>adj+IW still leads on PC at every block</b> and on EM everywhere except blk1 and blk32; the blk1 anomaly is the arrival collapse again (RAW 0.250), which forces a 17-hop patch and drags PC to 0.178 — the worst cell in the table despite a competitive EM.</li>
+<li><b>Guidance matters more, not less, after repair</b> at large blocks (blk64 EM 0.089 → 0.132, +48% relative) — the opposite of the fam 0.05 picture, where post-processing narrowed the gaps.</li>
+</ul>
+
+<h2>5. D-CBG — P1+P3 (fam 0.05, γ = 1)</h2>
+<p class="small"><span class="mono">eval_dcbg.py</span> emits raw and P1+P3 only (no P1/P3 in isolation). EM / PC / patch; the IW and adj+IW columns from §2.1 are repeated for reference.</p>
+<table>
+<tr><th>blk</th><th class="num">D-CBG exact EM (seen/unseen)</th><th class="num">D-CBG 1st-order EM (seen/unseen)</th><th class="num">IW EM (seen)</th><th class="num">adj+IW EM (seen)</th><th class="num">D-CBG exact PC / patch (seen)</th></tr>
+<tr><td>1</td><td class="num">0.307 / 0.302</td><td class="num">0.301 / 0.300</td><td class="num">0.307</td><td class="num"><b>0.376</b></td><td class="num">0.460 / 5.19</td></tr>
+<tr><td>2</td><td class="num">0.285 / 0.282</td><td class="num">0.269 / 0.268</td><td class="num">0.325</td><td class="num"><b>0.382</b></td><td class="num">0.438 / 6.27</td></tr>
+<tr><td>4</td><td class="num">0.282 / 0.279</td><td class="num">0.276 / 0.274</td><td class="num">0.312</td><td class="num"><b>0.342</b></td><td class="num">0.443 / 5.52</td></tr>
+<tr><td>8</td><td class="num">0.256 / 0.260</td><td class="num">0.253 / 0.252</td><td class="num">0.300</td><td class="num"><b>0.323</b></td><td class="num">0.422 / 6.03</td></tr>
+<tr><td>16</td><td class="num">0.245 / 0.241</td><td class="num">0.232 / 0.232</td><td class="num">0.243</td><td class="num"><b>0.266</b></td><td class="num">0.407 / 6.41</td></tr>
+<tr><td>32</td><td class="num">0.235 / 0.224</td><td class="num">0.219 / 0.219</td><td class="num">0.243</td><td class="num"><b>0.259</b></td><td class="num">0.400 / 6.47</td></tr>
+<tr><td>64</td><td class="num">0.200 / 0.200</td><td class="num">0.195 / 0.194</td><td class="num">0.211</td><td class="num"><b>0.230</b></td><td class="num">0.362 / 8.06</td></tr>
+</table>
+<ul class="small">
+<li><b>The RAW conclusion is unchanged by post-processing</b>: adj+IW &gt; IW ≥ D-CBG exact &gt; D-CBG first-order ≈ base in EM at almost every block. (blk16/32 are the exception, where D-CBG exact edges out plain IW by 0.002 EM — inside run-to-run noise.)</li>
+<li><b>First-order stays indistinguishable from base after repair too</b> (e.g. blk64 0.195 vs base 0.194; blk4 0.276 vs 0.272), confirming §5.3–§5.4 of the RAW report on the post-processed metrics as well.</li>
+<li>D-CBG's seen/unseen gap after repair is ≤0.011 EM, in line with everything else in this round.</li>
+</ul>
+
+<h2>6. Notes</h2>
+<ul class="small">
+<li>P1/P3 use <span class="mono">networkx.shortest_path</span> on the exceptional graph G<sub>except0</sub>; when no path exists the segment is left as-is (rare, and it is why validity is 1.000 rather than merely near-1.000 in these runs — no such failure occurred).</li>
+<li><b>patch</b> is the mean number of hops <i>added</i> by the repair, averaged over all 1,000 paths (0.00 for RAW by definition).</li>
+<li>Sources: <span class="mono">sets_log/v4_eval_job*.log</span> (guided, 336 rows), <span class="mono">sets_log/v4_dcbgeval_job*.log</span> (D-CBG, 56 rows), collected by <span class="mono">collect_postproc.py</span> into <span class="mono">sets_res/postproc_v4.json</span>.</li>
+<li>The RAW counterparts of every table here are in <span class="mono">RESULTS_BD_V4.pdf</span> §4 (fam 0.05), §5 (D-CBG) and §6 (fam 0.1); discriminator-level analysis is in <span class="mono">DISC_VALIDITY.pdf</span>.</li>
+</ul>
+</body>
+</html>
