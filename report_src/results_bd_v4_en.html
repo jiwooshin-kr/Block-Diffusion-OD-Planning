@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Block-Diffusion OD Planning — v4 Results (EOS-fixed backbones)</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 10.5px; line-height: 1.55; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.4px; }
+  th, td { border: 1px solid #bbb; padding: 3.5px 6px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  td.num, th.num { text-align: right; }
+  .status-box { background: #fff8e6; border: 1.5px solid #e6c260; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .best { font-weight: 700; }
+  .small { font-size: 8.9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .muted { color: #666; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>Block-Diffusion OD Planning — v4 Results (EOS-fixed backbones)</h1>
+<p class="small">2026-07-27 · This report is built <b>entirely on the v4 round</b>: all seven mask backbones retrained after the EOS boundary fix, all discriminators and evaluations redone on top of them. The previous consolidated report (<span class="mono">RESULTS_BD.pdf</span>) remains the record of the pre-fix (v2) backbones and is referenced here only as the before-side of the fix. <b>Naming</b>: every v4 artifact carries the <span class="mono">_v4</span> tag — checkpoints <span class="mono">BD_porto_v3_normal_mask_blk{B}_v4_bd.pth</span> (the <span class="mono">v3</span> token is the <i>dataset</i> index porto v3-0.05, not a model round), discs <span class="mono">BDdisc_*_v4.pth</span>, pools <span class="mono">*_pool_v4_*</span>, eval tags <span class="mono">v4m*</span>/<span class="mono">v4f01m*</span>.</p>
+
+<h2>1. The EOS boundary fix</h2>
+<p>The training canvas is <span class="mono">[dst, v0, …, v<sub>L-1</sub>=dst, END…END | PAD…]</span>, where END fills only the remainder of the block containing dst and later blocks are PAD (excluded from loss). Under that spec a sample whose dst lands <b>exactly on a block boundary</b> carries <b>zero END supervision</b> — a 1/B fraction of the data, and for B=1 <i>every</i> sample. The v2 blk1 backbone therefore never learned to terminate: unconditionally, 100% of its generations ran to the canvas cap (length 101, 50.5% invalid edges, valid rate 0.000). At B≥2 the same defect appeared as a systematic deficit of boundary-ending lengths: the generated share of lengths with (L+1) mod B = 0 was roughly half the real share (blk2 0.234 vs 0.500; blk32 0.011 vs 0.027).</p>
+<p><b>Fix</b> (<span class="mono">bd_models.py build_canvas()</span>): when the END tail would be empty, <b>extend the canvas by one full block of END tokens, included in the loss</b>. Every sample now trains ≥1 END target; for B=1 that is exactly one END token per sample. Verified by <span class="mono">smoke_test_bd.py</span> (canvas spec, both kernels' forward/backward and planning).</p>
+<p class="small"><b>blk64 is unchanged by construction</b>: no real path in this dataset has L=63 or 127 (boundary share ≈ 0.000), so the fix touches zero blk64 training samples; with identical seeding the v4 blk64 backbone reproduces v2's numbers exactly. It is retained for completeness.</p>
+
+<h2>2. Unconditional generation — before / after</h2>
+<p class="small">20,000 open-ended generations per backbone (<span class="mono">plan(None,None)</span>, valid under 10% joint ori+dst condition dropout), scored on the NORMAL world. Real reference: length 23.2±9.8. <b>valid</b> = all edges legal; <b>invE</b> = invalid-edge rate; <b>KS</b> = length-distribution Kolmogorov–Smirnov distance vs real; <b>cap%</b> = generations hitting the canvas cap (failed to stop); <b>novel</b> = share not appearing verbatim in the real set; <b>bres</b> = boundary-residue share, generated/real — the length class starved of END supervision before the fix. v2 values in gray.</p>
+<table>
+<tr><th>blk</th><th class="num">valid v4 (v2)</th><th class="num">invE v4 (v2)</th><th class="num">len v4 (v2)</th><th class="num">KS v4 (v2)</th><th class="num">cap% v4 (v2)</th><th class="num">novel v4 (v2)</th><th class="num">bres gen/real v4 (v2 gen)</th></tr>
+<tr><td>1</td><td class="num"><b>0.870</b> <span class="muted">(0.000)</span></td><td class="num"><b>2.29%</b> <span class="muted">(50.47%)</span></td><td class="num">25.2 <span class="muted">(101.0)</span></td><td class="num">0.045 <span class="muted">(1.000)</span></td><td class="num">0.9 <span class="muted">(100.0)</span></td><td class="num">0.396 <span class="muted">(1.000)</span></td><td class="num">— </td></tr>
+<tr><td>2</td><td class="num"><b>0.737</b> <span class="muted">(0.665)</span></td><td class="num">3.30% <span class="muted">(4.41%)</span></td><td class="num">23.3 <span class="muted">(24.1)</span></td><td class="num">0.010 <span class="muted">(0.042)</span></td><td class="num">0.0 <span class="muted">(0.1)</span></td><td class="num">0.427 <span class="muted">(0.519)</span></td><td class="num"><b>0.486</b>/0.500 <span class="muted">(0.234)</span></td></tr>
+<tr><td>4</td><td class="num"><b>0.617</b> <span class="muted">(0.517)</span></td><td class="num">2.59% <span class="muted">(3.78%)</span></td><td class="num">23.8 <span class="muted">(24.1)</span></td><td class="num">0.026 <span class="muted">(0.039)</span></td><td class="num">0.0 <span class="muted">(0.1)</span></td><td class="num">0.662 <span class="muted">(0.747)</span></td><td class="num"><b>0.235</b>/0.250 <span class="muted">(0.173)</span></td></tr>
+<tr><td>8</td><td class="num">0.325 <span class="muted">(0.382)</span></td><td class="num">5.88% <span class="muted">(4.86%)</span></td><td class="num">23.8 <span class="muted">(24.5)</span></td><td class="num">0.023 <span class="muted">(0.055)</span></td><td class="num">0.0 <span class="muted">(0.0)</span></td><td class="num">0.855 <span class="muted">(0.834)</span></td><td class="num"><b>0.115</b>/0.125 <span class="muted">(0.102)</span></td></tr>
+<tr><td>16</td><td class="num">0.202 <span class="muted">(0.184)</span></td><td class="num">8.30% <span class="muted">(9.09%)</span></td><td class="num">24.4 <span class="muted">(23.0)</span></td><td class="num">0.056 <span class="muted">(0.019)</span></td><td class="num">0.0 <span class="muted">(0.0)</span></td><td class="num">0.902 <span class="muted">(0.903)</span></td><td class="num"><b>0.054</b>/0.061 <span class="muted">(0.033)</span></td></tr>
+<tr><td>32</td><td class="num">0.141 <span class="muted">(0.232)</span></td><td class="num">9.37% <span class="muted">(11.48%)</span></td><td class="num">25.6 <span class="muted">(16.7)</span></td><td class="num">0.120 <span class="muted">(0.278)</span></td><td class="num">0.0 <span class="muted">(0.0)</span></td><td class="num">0.945 <span class="muted">(0.935)</span></td><td class="num"><b>0.032</b>/0.027 <span class="muted">(0.011)</span></td></tr>
+<tr><td>64</td><td class="num">0.104 <span class="muted">(0.104)</span></td><td class="num">11.42% <span class="muted">(11.42%)</span></td><td class="num">24.1 <span class="muted">(24.1)</span></td><td class="num">0.056 <span class="muted">(0.056)</span></td><td class="num">0.0 <span class="muted">(0.0)</span></td><td class="num">0.971 <span class="muted">(0.971)</span></td><td class="num">0.000/0.000 <span class="muted">(0.000)</span></td></tr>
+</table>
+<ul class="small">
+<li><b>blk1 collapse fully resolved</b>: valid 0.000 → 0.870 (now the best unconditional generator), invalid edges 50.5% → 2.3%, length 101 (all capped) → 25.2 with KS 0.045. AR needed exactly one trained END per sample.</li>
+<li><b>Boundary-residue deficit gone</b> at every block: generated shares now match real (blk2 0.486 vs 0.500; before 0.234).</li>
+<li><b>Validity–novelty trade-off persists</b>: small blocks are more valid but copy training routes more often (blk1 novel 0.396); blk4–8 balance validity 0.33–0.62 with novelty 0.66–0.86.</li>
+<li><b>Caveats</b>: blk8 (0.382→0.325) and blk32 (0.232→0.141) validity dipped — single-run training variance is not separable here; blk32's length calibration nevertheless improved sharply (KS 0.278→0.120, mean 16.7→25.6).</li>
+</ul>
+
+<h2>3. Conditional planning — held-out real OD pairs (normal world)</h2>
+<p class="small">1,000 held-out real shortest-path pairs, 3 generation seeds, mean±std (<span class="mono">eval_bd_sweep_controlled -suffix v4</span>). <b>arr</b> = reaches destination; <b>v∧h</b> = valid∧hit; EM/PC per §1.2 of the v3 report. All RAW (no refine).</p>
+<table>
+<tr><th>blk</th><th class="num">arrival</th><th class="num">valid</th><th class="num">valid∧hit</th><th class="num">EM</th><th class="num">PC</th><th class="num">s/path</th></tr>
+<tr><td>1</td><td class="num">0.994±0.002</td><td class="num"><b>0.952±0.005</b></td><td class="num"><b>0.948±0.005</b></td><td class="num"><b>0.843±0.007</b></td><td class="num"><b>0.887±0.006</b></td><td class="num">0.082</td></tr>
+<tr><td>2</td><td class="num">0.948±0.005</td><td class="num">0.818±0.006</td><td class="num">0.789±0.008</td><td class="num">0.756±0.005</td><td class="num">0.782±0.006</td><td class="num">0.060</td></tr>
+<tr><td>4</td><td class="num">0.937±0.004</td><td class="num">0.878±0.008</td><td class="num">0.826±0.005</td><td class="num">0.786±0.010</td><td class="num">0.823±0.010</td><td class="num">0.035</td></tr>
+<tr><td>8</td><td class="num">0.932±0.012</td><td class="num">0.728±0.003</td><td class="num">0.687±0.010</td><td class="num">0.671±0.004</td><td class="num">0.695±0.003</td><td class="num">0.030</td></tr>
+<tr><td>16</td><td class="num">0.926±0.000</td><td class="num">0.676±0.013</td><td class="num">0.641±0.008</td><td class="num">0.600±0.010</td><td class="num">0.631±0.011</td><td class="num">0.031</td></tr>
+<tr><td>32</td><td class="num">0.879±0.004</td><td class="num">0.585±0.010</td><td class="num">0.529±0.011</td><td class="num">0.499±0.006</td><td class="num">0.533±0.008</td><td class="num">0.032</td></tr>
+<tr><td>64</td><td class="num">0.839±0.005</td><td class="num">0.430±0.014</td><td class="num">0.373±0.010</td><td class="num">0.366±0.012</td><td class="num">0.391±0.012</td><td class="num">0.033</td></tr>
+</table>
+<p class="small">Conditional quality still favors small blocks (dst-anchored first-hit termination is untouched by the EOS fix). Together with §2, the division of roles is now clean: <b>conditional planning → small blocks; unconditional / open-ended synthesis → diffusion blocks only</b> (blk1 was unusable there before the fix and is competitive after it, but larger blocks retain the novelty edge and guidance headroom).</p>
+
+<h2>4. Guidance on the exceptional scenario — fam 0.05 (except_0, RAW)</h2>
+<p class="small">Reserved 1,000 except_0 pairs (never seen by any disc), seed 7, first-hitting, per-block model-negative discriminators (<span class="mono">_v4</span>), n_is=100. Columns per method: valid / arrival / <b>valid∧arrival</b> / EM / PC, all RAW. Plain IW is omitted from the tables (base &lt; IW &lt; adj+IW ordering holds at every block; e.g. blk4 valid 0.279/0.332/0.389). <b>Seen</b> = disc trained on except_0 (1%, excluding the reserved rows); <b>Unseen</b> = disc trained on except 1–99, applied zero-shot.</p>
+<h3>4.1 Seen</h3>
+<table>
+<tr><th>blk</th><th class="num">base valid</th><th class="num">base arr</th><th class="num">base v∧a</th><th class="num">base EM</th><th class="num">base PC</th><th class="num">adj+IW valid</th><th class="num">adj+IW arr</th><th class="num">adj+IW v∧a</th><th class="num">adj+IW EM</th><th class="num">adj+IW PC</th></tr>
+<tr><td>1</td><td class="num">0.302</td><td class="num">0.994</td><td class="num"><b>0.300</b></td><td class="num">0.271</td><td class="num">0.283</td><td class="num">0.928</td><td class="num">0.567</td><td class="num"><b>0.540</b></td><td class="num">0.374</td><td class="num">0.425</td></tr>
+<tr><td>2</td><td class="num">0.251</td><td class="num">0.949</td><td class="num"><b>0.238</b></td><td class="num">0.233</td><td class="num">0.240</td><td class="num">0.492</td><td class="num">0.846</td><td class="num"><b>0.401</b></td><td class="num">0.388</td><td class="num">0.423</td></tr>
+<tr><td>4</td><td class="num">0.279</td><td class="num">0.932</td><td class="num"><b>0.262</b></td><td class="num">0.243</td><td class="num">0.258</td><td class="num">0.389</td><td class="num">0.873</td><td class="num"><b>0.328</b></td><td class="num">0.334</td><td class="num">0.357</td></tr>
+<tr><td>8</td><td class="num">0.229</td><td class="num">0.938</td><td class="num"><b>0.214</b></td><td class="num">0.202</td><td class="num">0.214</td><td class="num">0.331</td><td class="num">0.862</td><td class="num"><b>0.273</b></td><td class="num">0.295</td><td class="num">0.309</td></tr>
+<tr><td>16</td><td class="num">0.206</td><td class="num">0.923</td><td class="num"><b>0.194</b></td><td class="num">0.180</td><td class="num">0.190</td><td class="num">0.298</td><td class="num">0.865</td><td class="num"><b>0.250</b></td><td class="num">0.230</td><td class="num">0.255</td></tr>
+<tr><td>32</td><td class="num">0.185</td><td class="num">0.870</td><td class="num"><b>0.160</b></td><td class="num">0.157</td><td class="num">0.168</td><td class="num">0.265</td><td class="num">0.825</td><td class="num"><b>0.215</b></td><td class="num">0.219</td><td class="num">0.237</td></tr>
+<tr><td>64</td><td class="num">0.141</td><td class="num">0.827</td><td class="num"><b>0.119</b></td><td class="num">0.129</td><td class="num">0.134</td><td class="num">0.229</td><td class="num">0.795</td><td class="num"><b>0.162</b></td><td class="num">0.176</td><td class="num">0.198</td></tr>
+</table>
+<h3>4.2 Unseen (disc = except 1–99 → except_0; base identical to §4.1)</h3>
+<table>
+<tr><th>blk</th><th class="num">base valid</th><th class="num">base arr</th><th class="num">base v∧a</th><th class="num">base EM</th><th class="num">base PC</th><th class="num">adj+IW valid</th><th class="num">adj+IW arr</th><th class="num">adj+IW v∧a</th><th class="num">adj+IW EM</th><th class="num">adj+IW PC</th></tr>
+<tr><td>1</td><td class="num">0.302</td><td class="num">0.994</td><td class="num"><b>0.300</b></td><td class="num">0.271</td><td class="num">0.283</td><td class="num">0.925</td><td class="num">0.558</td><td class="num"><b>0.530</b></td><td class="num">0.362</td><td class="num">0.412</td></tr>
+<tr><td>2</td><td class="num">0.251</td><td class="num">0.949</td><td class="num"><b>0.238</b></td><td class="num">0.233</td><td class="num">0.240</td><td class="num">0.488</td><td class="num">0.848</td><td class="num"><b>0.415</b></td><td class="num">0.367</td><td class="num">0.408</td></tr>
+<tr><td>4</td><td class="num">0.279</td><td class="num">0.932</td><td class="num"><b>0.262</b></td><td class="num">0.243</td><td class="num">0.258</td><td class="num">0.390</td><td class="num">0.875</td><td class="num"><b>0.331</b></td><td class="num">0.335</td><td class="num">0.357</td></tr>
+<tr><td>8</td><td class="num">0.229</td><td class="num">0.938</td><td class="num"><b>0.214</b></td><td class="num">0.202</td><td class="num">0.214</td><td class="num">0.331</td><td class="num">0.863</td><td class="num"><b>0.273</b></td><td class="num">0.295</td><td class="num">0.308</td></tr>
+<tr><td>16</td><td class="num">0.206</td><td class="num">0.923</td><td class="num"><b>0.194</b></td><td class="num">0.180</td><td class="num">0.190</td><td class="num">0.300</td><td class="num">0.868</td><td class="num"><b>0.254</b></td><td class="num">0.237</td><td class="num">0.261</td></tr>
+<tr><td>32</td><td class="num">0.185</td><td class="num">0.870</td><td class="num"><b>0.160</b></td><td class="num">0.157</td><td class="num">0.168</td><td class="num">0.268</td><td class="num">0.828</td><td class="num"><b>0.219</b></td><td class="num">0.222</td><td class="num">0.240</td></tr>
+<tr><td>64</td><td class="num">0.141</td><td class="num">0.827</td><td class="num"><b>0.119</b></td><td class="num">0.129</td><td class="num">0.134</td><td class="num">0.224</td><td class="num">0.798</td><td class="num"><b>0.162</b></td><td class="num">0.178</td><td class="num">0.197</td></tr>
+</table>
+<ul class="small">
+<li><b>The v2 conclusions replicate on the fixed backbones</b>: adj+IW improves the strict raw success (valid∧arrival) at every block, trading arrival for a larger validity gain; blk1 is the extreme case (valid 0.302→0.928, arrival 0.994→0.567, v∧a 0.300→0.540).</li>
+<li><b>Seen/unseen gap ≤0.015 everywhere</b> (e.g. v∧a blk1 0.540/0.530, blk4 0.328/0.331) — zero-shot scenario transfer confirmed again; the discriminator-level analysis is in <span class="mono">DISC_VALIDITY.pdf</span>.</li>
+<li>adj+IW ESS ≈ 95.5 (blk64) – 99.7 (blk1): the disc tilt stays gentle per reveal; the blk1 jump is driven by Lemma-3 adjacency masking, not the disc.</li>
+</ul>
+
+<h2>5. Guidance — fam 0.1 (except_0, RAW; same protocol)</h2>
+<p class="small">Same pipeline at edge-remove ratio 0.1: a much harder scoring world (twice the removed edges) — base validity drops to 0.04–0.12. Per-block <span class="mono">_v4</span> discs trained on fam 0.1 scenarios; unseen = except 1–99 → except_0 zero-shot.</p>
+<h3>5.1 Seen</h3>
+<table>
+<tr><th>blk</th><th class="num">base valid</th><th class="num">base arr</th><th class="num">base v∧a</th><th class="num">base EM</th><th class="num">base PC</th><th class="num">adj+IW valid</th><th class="num">adj+IW arr</th><th class="num">adj+IW v∧a</th><th class="num">adj+IW EM</th><th class="num">adj+IW PC</th></tr>
+<tr><td>1</td><td class="num">0.115</td><td class="num">0.993</td><td class="num"><b>0.114</b></td><td class="num">0.108</td><td class="num">0.110</td><td class="num">0.927</td><td class="num">0.250</td><td class="num"><b>0.234</b></td><td class="num">0.144</td><td class="num">0.177</td></tr>
+<tr><td>2</td><td class="num">0.096</td><td class="num">0.960</td><td class="num"><b>0.092</b></td><td class="num">0.089</td><td class="num">0.092</td><td class="num">0.245</td><td class="num">0.717</td><td class="num"><b>0.163</b></td><td class="num">0.174</td><td class="num">0.200</td></tr>
+<tr><td>4</td><td class="num">0.089</td><td class="num">0.949</td><td class="num"><b>0.084</b></td><td class="num">0.075</td><td class="num">0.081</td><td class="num">0.169</td><td class="num">0.841</td><td class="num"><b>0.137</b></td><td class="num">0.141</td><td class="num">0.152</td></tr>
+<tr><td>8</td><td class="num">0.077</td><td class="num">0.933</td><td class="num"><b>0.071</b></td><td class="num">0.073</td><td class="num">0.074</td><td class="num">0.143</td><td class="num">0.804</td><td class="num"><b>0.101</b></td><td class="num">0.123</td><td class="num">0.131</td></tr>
+<tr><td>16</td><td class="num">0.075</td><td class="num">0.934</td><td class="num"><b>0.069</b></td><td class="num">0.067</td><td class="num">0.071</td><td class="num">0.132</td><td class="num">0.819</td><td class="num"><b>0.091</b></td><td class="num">0.103</td><td class="num">0.115</td></tr>
+<tr><td>32</td><td class="num">0.072</td><td class="num">0.884</td><td class="num"><b>0.061</b></td><td class="num">0.062</td><td class="num">0.066</td><td class="num">0.118</td><td class="num">0.793</td><td class="num"><b>0.076</b></td><td class="num">0.088</td><td class="num">0.099</td></tr>
+<tr><td>64</td><td class="num">0.040</td><td class="num">0.865</td><td class="num"><b>0.032</b></td><td class="num">0.034</td><td class="num">0.036</td><td class="num">0.119</td><td class="num">0.744</td><td class="num"><b>0.068</b></td><td class="num">0.094</td><td class="num">0.105</td></tr>
+</table>
+<h3>5.2 Unseen (base identical to §5.1)</h3>
+<table>
+<tr><th>blk</th><th class="num">base valid</th><th class="num">base arr</th><th class="num">base v∧a</th><th class="num">base EM</th><th class="num">base PC</th><th class="num">adj+IW valid</th><th class="num">adj+IW arr</th><th class="num">adj+IW v∧a</th><th class="num">adj+IW EM</th><th class="num">adj+IW PC</th></tr>
+<tr><td>1</td><td class="num">0.115</td><td class="num">0.993</td><td class="num"><b>0.114</b></td><td class="num">0.108</td><td class="num">0.110</td><td class="num">0.932</td><td class="num">0.248</td><td class="num"><b>0.232</b></td><td class="num">0.145</td><td class="num">0.177</td></tr>
+<tr><td>2</td><td class="num">0.096</td><td class="num">0.960</td><td class="num"><b>0.092</b></td><td class="num">0.089</td><td class="num">0.092</td><td class="num">0.243</td><td class="num">0.720</td><td class="num"><b>0.164</b></td><td class="num">0.174</td><td class="num">0.198</td></tr>
+<tr><td>4</td><td class="num">0.089</td><td class="num">0.949</td><td class="num"><b>0.084</b></td><td class="num">0.075</td><td class="num">0.081</td><td class="num">0.168</td><td class="num">0.841</td><td class="num"><b>0.136</b></td><td class="num">0.141</td><td class="num">0.151</td></tr>
+<tr><td>8</td><td class="num">0.077</td><td class="num">0.933</td><td class="num"><b>0.071</b></td><td class="num">0.073</td><td class="num">0.074</td><td class="num">0.145</td><td class="num">0.803</td><td class="num"><b>0.101</b></td><td class="num">0.124</td><td class="num">0.132</td></tr>
+<tr><td>16</td><td class="num">0.075</td><td class="num">0.934</td><td class="num"><b>0.069</b></td><td class="num">0.067</td><td class="num">0.071</td><td class="num">0.134</td><td class="num">0.819</td><td class="num"><b>0.092</b></td><td class="num">0.102</td><td class="num">0.115</td></tr>
+<tr><td>32</td><td class="num">0.072</td><td class="num">0.884</td><td class="num"><b>0.061</b></td><td class="num">0.062</td><td class="num">0.066</td><td class="num">0.117</td><td class="num">0.800</td><td class="num"><b>0.079</b></td><td class="num">0.084</td><td class="num">0.097</td></tr>
+<tr><td>64</td><td class="num">0.040</td><td class="num">0.865</td><td class="num"><b>0.032</b></td><td class="num">0.034</td><td class="num">0.036</td><td class="num">0.121</td><td class="num">0.745</td><td class="num"><b>0.070</b></td><td class="num">0.095</td><td class="num">0.105</td></tr>
+</table>
+<ul class="small">
+<li><b>Guidance survives the harder world</b>: relative gains grow (blk64 valid 0.040→0.119, ~3×; v∧a 0.032→0.068–0.070), though absolute levels are low — at 10% edge removal the base model's prior is badly mismatched with the scenario graph.</li>
+<li><b>The arrival cost of hard masking grows with difficulty</b>: blk1 adj+IW arrival collapses to 0.25 (legal-only reveals overrun the destination far more often when twice the edges are gone). v∧a still doubles over base (0.114→0.234). Endpoint post-processing (P3) is the natural complement, as in the v3 report.</li>
+<li><b>Zero-shot transfer holds at fam 0.1 too</b>: seen/unseen gap ≤0.003 in v∧a across all blocks.</li>
+<li>adj+IW ESS 97.2 (blk64) – 99.6 (blk1); orderings base &lt; IW &lt; adj+IW hold at every block.</li>
+</ul>
+
+<h2>6. Discriminator validity (summary)</h2>
+<p class="small">Full analysis in <span class="mono">DISC_VALIDITY.pdf</span> / <span class="mono">DISC_VALIDITY_KO.pdf</span>. Headlines: (i) seen vs unseen discs score held-out inputs near-identically (logit Pearson 0.81–0.98); (ii) on the model-negative task, zero-shot AUC loss is ≤0.05 in both probe directions — most of the signal (edge legality vs the input adjacency, model artifacts) is scenario-agnostic by construction; (iii) the harder data-negative probe (real vs real) separates the two training regimes: the single-scenario e0 disc drops −0.100 (fam 0.05) / −0.084 (fam 0.1) AUC zero-shot, while the 99-scenario e99 disc is nearly flat — multi-scenario training is what buys genuine scenario-specific generalization; (iv) the v2 blk1 "best AUC" was an artifact of its degenerate negative pool and disappears after the EOS fix (0.985 → 0.870), confirming the negative-pool confound analysis.</p>
+
+<h2>7. Notes & provenance</h2>
+<ul class="small">
+<li>Pipeline: <span class="mono">run_v4_all.sh</span>, single tmux chain, 2026-07-27 00:48–04:22 KST (Stage A retrain ≈ 1h40m; 28 guided evals ≈ 1h). Raw artifacts: <span class="mono">sets_res/va_table_v4_f005.json</span>, <span class="mono">va_table_v4_f01.json</span>, <span class="mono">uncond_pool_eval_v4.json</span>, <span class="mono">disc_gen_eval_f{005,01}{,_data}_v4.json</span>, logs <span class="mono">sets_log/v4_*.log</span>.</li>
+<li>Training identical to v2 except the canvas fix: <span class="mono">train_porto_bd.sh mask B gpu v4</span> (1 epoch, bs 32, lr 5e-4, drop_cond 0.1 — ori and dst are always dropped <i>jointly</i>, never individually).</li>
+<li>The conditional-eval script's output prefix is hard-coded <span class="mono">V2_</span>; its per-path CSVs under that prefix now hold v4 results (v2 aggregates preserved in <span class="mono">sets_log/v2_ctrl_mask.log</span> and the v3 report).</li>
+<li>Old (pre-fix) checkpoints/discs/pools were left in place; nothing v4 overwrites them (distinct names). They can be deleted once this report is accepted.</li>
+</ul>
+</body>
+</html>

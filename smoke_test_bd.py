@@ -60,10 +60,17 @@ if __name__ == "__main__":
     assert lm[0, :2].tolist() == [False, False] and lm[0, 2:8].all()
     p2 = torch.arange(20, 27).float()         # L=7 -> dst at pos 7 (block boundary)
     x0b, lmb, *_ = m.build_canvas([p2.to(device)])
-    assert x0b.shape[1] == 8 and int((x0b[0] == m.END).sum()) == 0, "boundary case: no END"
+    # boundary case: one extra full END block so END supervision is never empty
+    assert x0b.shape[1] == 12 and int((x0b[0] == m.END).sum()) == 4, "boundary case: +1 END block"
+    assert bool((x0b[0, 8:12] == m.END).all()) and lmb[0, 8:12].all()
     x0c, lmc, *_ = m.build_canvas([p.to(device), p2.to(device)])  # mixed batch
-    assert x0c.shape[1] == 8 and bool((x0c[0, 6:] == m.END).all())
-    print("[1] canvas spec ok (END tail in dst block, PAD excluded, boundary case)")
+    assert x0c.shape[1] == 12 and bool((x0c[0, 6:8] == m.END).all())
+    assert bool((x0c[0, 8:] == m.PAD).all()) and not lmc[0, 8:].any()
+    # block=1 no longer degenerate: every sample gets exactly one END target
+    m1 = build("mask", dataset, device); m1.block_size = 1
+    x0d, lmd, *_ = m1.build_canvas([p.to(device)])
+    assert int((x0d[0] == m1.END).sum()) == 1 and x0d[0, 6].item() == m1.END and lmd[0, 6]
+    print("[1] canvas spec ok (END tail; boundary +1 END block; blk1 END trained)")
 
     # ---- 2. mask kernel -------------------------------------------------
     m.train()

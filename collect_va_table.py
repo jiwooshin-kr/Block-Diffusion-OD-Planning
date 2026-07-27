@@ -1,17 +1,16 @@
 """
-Assemble the 10-column table for RESULTS_BD §4.1/§4.2 from saved em_pc records:
-base / adj+IW x {valid, arrival, valid&arrival, EM, PC}, blocks 1-64,
-seen (disc=except_0) and unseen (disc=except 1-99) regimes.
-
-Reads sets_res/em_pc/{tag}_{cfg}_raw_em_pc_records.csv written by
-three_way_postproc.py runs (v3 series, v2 backbones, seed 7) -- no GPU needed.
+Assemble the 10-column guidance table (base / adj+IW x {valid, arrival,
+valid&arrival, EM, PC}) from saved em_pc per-path records of three_way runs.
 Arrival is recomputed from each record's gen_path endpoint vs the true
-destination of the same reserved eval pair (SPLIT_SEED=777, identical
-reconstruction to three_way_postproc.py).
+destination of the reserved eval pair (SPLIT_SEED=777).
 
-  python collect_va_table.py
+  python collect_va_table.py -family 0.05 -tag_seen 'v4m{B}seen' -tag_uns 'v4m{B}uns' \
+      -out va_table_v4_f005.json
+  python collect_va_table.py -family 0.1 -tag_seen 'v4f01m{B}seen' -tag_uns 'v4f01m{B}uns' \
+      -out va_table_v4_f01.json
 """
 
+import argparse
 import csv
 import json
 import pickle
@@ -20,32 +19,36 @@ from os.path import join
 import numpy as np
 
 SPLIT_SEED = 777
-BLOCKS = [1, 2, 4, 8, 16, 32, 64]
-TAGS = {
-    "seen": {1: "v3mm1seen", 2: "v3mm2seen", 4: "v3m4", 8: "v3m8",
-             16: "v3m16", 32: "v3m32", 64: "v3m64"},
-    "unseen": {1: "v3mm1unseen", 2: "v3mm2unseen", 4: "v3m4uns", 8: "v3m8uns",
-               16: "v3m16uns", 32: "v3m32uns", 64: "v3m64uns"},
-}
 CFGS = ["base", "modelD", "adj+modelD"]
 
 if __name__ == "__main__":
-    sp_exc = pickle.load(open("./porto_data/porto_shrink_SP_v4-0.05_except_0.pkl", "rb"))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-family", type=str, default="0.05")
+    ap.add_argument("-blocks", type=str, default="1,2,4,8,16,32,64")
+    ap.add_argument("-tag_seen", type=str, required=True, help="e.g. 'v4m{B}seen'")
+    ap.add_argument("-tag_uns", type=str, required=True, help="e.g. 'v4m{B}uns'")
+    ap.add_argument("-out", type=str, required=True)
+    ap.add_argument("-porto", type=str, default="./porto_data")
+    ap.add_argument("-res_path", type=str, default="./sets_res")
+    args = ap.parse_args()
+
+    sp_exc = pickle.load(open(join(args.porto, f"porto_shrink_SP_v4-{args.family}_except_0.pkl"), "rb"))
     perm = np.random.RandomState(SPLIT_SEED).permutation(len(sp_exc))
     real = [list(map(int, sp_exc[i])) for i in perm[:1000] if len(sp_exc[i]) >= 2][:1000]
     dests = [p[-1] for p in real]
 
     out = {}
-    for regime, tags in TAGS.items():
-        for blk in BLOCKS:
+    for regime, pat in [("seen", args.tag_seen), ("unseen", args.tag_uns)]:
+        for blk in [int(b) for b in args.blocks.split(",")]:
             for cfg in CFGS:
-                path = join("./sets_res/em_pc", f"{tags[blk]}_{cfg}_raw_em_pc_records.csv")
+                path = join(args.res_path, "em_pc",
+                            f"{pat.format(B=blk)}_{cfg}_raw_em_pc_records.csv")
                 try:
                     rows = list(csv.DictReader(open(path)))
                 except FileNotFoundError:
                     print(f"MISSING {path}")
                     continue
-                assert len(rows) == len(real), f"{path}: {len(rows)} rows vs {len(real)} pairs"
+                assert len(rows) == len(real), f"{path}: {len(rows)} rows vs {len(real)}"
                 valid = np.array([int(r["valid"]) for r in rows])
                 em = np.array([int(r["em"]) for r in rows])
                 pc = np.array([float(r["pc"]) for r in rows])
@@ -61,9 +64,9 @@ if __name__ == "__main__":
                     "em": float(em.mean()), "pc": float(pc.mean()),
                 }
                 m = out[key]
-                print(f"{key:<28} valid={m['valid']:.3f} arr={m['arrival']:.3f} "
+                print(f"{key:<30} valid={m['valid']:.3f} arr={m['arrival']:.3f} "
                       f"va={m['valid_and_arrival']:.3f} em={m['em']:.3f} pc={m['pc']:.3f}")
 
-    with open("./sets_res/va_table.json", "w") as f:
+    with open(join(args.res_path, args.out), "w") as f:
         json.dump(out, f, indent=2)
-    print("written ./sets_res/va_table.json")
+    print(f"written {join(args.res_path, args.out)}")

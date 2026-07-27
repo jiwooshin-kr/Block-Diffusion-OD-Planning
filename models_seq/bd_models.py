@@ -382,6 +382,11 @@ class BlockDiffusion(nn.Module):
         # end of its block (exclusive):
         dst_pos = pfx - 1 + lengths - 1                          # (b,)
         end_blk = (torch.div(dst_pos, block, rounding_mode="floor") + 1) * block
+        # when dst lands exactly on a block boundary the END tail would be
+        # empty and the sample would carry zero END supervision (for B=1 that
+        # is EVERY sample -> the model never learns to terminate); extend by
+        # one full END block so every sample trains >= 1 END target.
+        end_blk = torch.where(end_blk == dst_pos + 1, end_blk + block, end_blk)
         end_blk = torch.clamp(end_blk, max=self.bd_max_len)
 
         n = int(end_blk.max().item())
