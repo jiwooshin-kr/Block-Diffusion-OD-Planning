@@ -52,6 +52,41 @@
 <li><b>Caveats</b>: blk8 (0.382→0.325) and blk32 (0.232→0.141) validity dipped — single-run training variance is not separable here; blk32's length calibration nevertheless improved sharply (KS 0.278→0.120, mean 16.7→25.6).</li>
 </ul>
 
+<h3>2b. Unconditional EM/PC — each sample's own endpoints as its OD</h3>
+<p class="small">EM/PC need no <i>given</i> OD: <span class="mono">evaluate_em_pc</span> takes the generated path's own (start, end) as its OD and looks it up in the reference shortest-path data. Since training paths are shortest paths, <b>uncond EM = "is the sample a shortest path between its own endpoints"</b> — a distribution-fidelity metric. OD coverage (share of generated ODs present in the reference) is ≈1.0 at every block, so the measurement is clean. 3,000 samples/block, seed 7. <b>novel∧EM</b> is the synthetic-data currency: a <i>new</i> shortest path for a known OD, i.e. an alternative equal-length route absent from the dataset.</p>
+<table>
+<tr><th>blk</th><th class="num">valid</th><th class="num">EM</th><th class="num">PC</th><th class="num">novel</th><th class="num">valid∧novel</th><th class="num">novel∧EM</th><th class="num">OD cov</th></tr>
+<tr><td>1</td><td class="num">0.864</td><td class="num"><b>0.640</b></td><td class="num"><b>0.716</b></td><td class="num">0.406</td><td class="num">0.271</td><td class="num">0.046</td><td class="num">1.000</td></tr>
+<tr><td>2</td><td class="num">0.745</td><td class="num">0.629</td><td class="num">0.675</td><td class="num">0.425</td><td class="num">0.170</td><td class="num"><b>0.054</b></td><td class="num">1.000</td></tr>
+<tr><td>4</td><td class="num">0.633</td><td class="num">0.401</td><td class="num">0.481</td><td class="num">0.652</td><td class="num"><b>0.285</b></td><td class="num"><b>0.053</b></td><td class="num">0.999</td></tr>
+<tr><td>8</td><td class="num">0.346</td><td class="num">0.178</td><td class="num">0.230</td><td class="num">0.851</td><td class="num">0.197</td><td class="num">0.029</td><td class="num">0.998</td></tr>
+<tr><td>16</td><td class="num">0.197</td><td class="num">0.113</td><td class="num">0.141</td><td class="num">0.907</td><td class="num">0.104</td><td class="num">0.019</td><td class="num">0.997</td></tr>
+<tr><td>32</td><td class="num">0.130</td><td class="num">0.058</td><td class="num">0.080</td><td class="num">0.951</td><td class="num">0.081</td><td class="num">0.009</td><td class="num">0.998</td></tr>
+<tr><td>64</td><td class="num">0.105</td><td class="num">0.035</td><td class="num">0.056</td><td class="num">0.973</td><td class="num">0.078</td><td class="num">0.008</td><td class="num">0.995</td></tr>
+</table>
+<ul class="small">
+<li><b>blk1/2 dominate shortest-path fidelity</b> (EM 0.63–0.64 vs blk4 0.40); on the novelty-quality frontier blk2/4 hold only a slim edge (novel∧EM 0.053–0.054 vs blk1's 0.046; valid∧novel blk4 0.285 vs blk1 0.271).</li>
+<li><b>Novelty caveat</b>: this dataset is shortest paths, so per OD the answer is near-unique — a <i>perfect</i> generative model would show <i>low</i> novelty. blk1's verbatim copies are partly a sign of learning the distribution, not only memorization; the novelty axis is intrinsically tilted toward larger blocks, and even so their edge is ≤1%p absolute.</li>
+</ul>
+<h3>2c. Diversity among VALID generations — the intuition test</h3>
+<p class="small">Raw novelty rises with block size (0.406 → 0.973, within-block mean-field sampling adds combinatorial variety) — but diversity of invalid paths is noise. Restricting to the valid subset and benchmarking against an equal-size real sample (metrics: distinct-OD share, distinct directed edges used, edge-usage Shannon entropy, mean pairwise Jaccard similarity of edge sets — higher = more mutually similar):</p>
+<table>
+<tr><th></th><th class="num">n valid</th><th class="num">distinct OD</th><th class="num">edge support</th><th class="num">edge entropy</th><th class="num">pairwise Jaccard</th></tr>
+<tr><td><b>real (20k)</b></td><td class="num">20,000</td><td class="num">1.000</td><td class="num"><b>3,856</b></td><td class="num"><b>10.62 b</b></td><td class="num"><b>0.0124</b></td></tr>
+<tr><td>blk1</td><td class="num">17,395</td><td class="num">0.995</td><td class="num"><b>3,793</b></td><td class="num"><b>10.54 b</b></td><td class="num"><b>0.0132</b></td></tr>
+<tr><td>blk2</td><td class="num">14,744</td><td class="num">0.996</td><td class="num">3,728</td><td class="num">10.47 b</td><td class="num">0.0151</td></tr>
+<tr><td>blk4</td><td class="num">12,338</td><td class="num">0.995</td><td class="num">3,753</td><td class="num">10.49 b</td><td class="num">0.0131</td></tr>
+<tr><td>blk8</td><td class="num">6,501</td><td class="num">0.996</td><td class="num">3,541</td><td class="num">10.30 b</td><td class="num">0.0149</td></tr>
+<tr><td>blk16</td><td class="num">4,046</td><td class="num">0.995</td><td class="num">3,273</td><td class="num">10.09 b</td><td class="num">0.0189</td></tr>
+<tr><td>blk32</td><td class="num">2,829</td><td class="num">0.995</td><td class="num">3,124</td><td class="num">9.99 b</td><td class="num">0.0186</td></tr>
+<tr><td>blk64</td><td class="num">2,080</td><td class="num">0.998</td><td class="num">2,889</td><td class="num">10.03 b</td><td class="num">0.0186</td></tr>
+</table>
+<ul class="small">
+<li><b>Conditioned on validity, diversity <i>decreases</i> with block size</b> — the opposite of the raw-novelty picture: edge support 3,793 → 2,889, entropy 10.54 → 10.03 b, pairwise similarity 0.0132 → 0.0186. Selection effect: at large B only 10–14% of samples are valid, and the survivors concentrate on short, common corridors.</li>
+<li><b>blk1's valid set matches the real distribution's diversity almost exactly</b> (98% of the real edge support, entropy −0.08 b, near-identical pairwise similarity). The apparent diversity of large blocks is mostly the diversity of invalid noise.</li>
+<li><b>Net reading for the block-size choice</b>: quality, fidelity and <i>valid</i> diversity all favor small blocks; the only quantitative diffusion edge left in open-ended generation is the slim novel∧EM margin of blk2–4. (Sampling-speed differences measured earlier are implementation overhead, not algorithmic — first-hitting NFE is block-size-independent; see §7.)</li>
+</ul>
+
 <h2>3. Conditional planning — held-out real OD pairs (normal world)</h2>
 <p class="small">1,000 held-out real shortest-path pairs, 3 generation seeds, mean±std (<span class="mono">eval_bd_sweep_controlled -suffix v4</span>). <b>arr</b> = reaches destination; <b>v∧h</b> = valid∧hit; EM/PC per §1.2 of the v3 report. All RAW (no refine).</p>
 <table>
@@ -135,6 +170,7 @@
 <li>Pipeline: <span class="mono">run_v4_all.sh</span>, single tmux chain, 2026-07-27 00:48–04:22 KST (Stage A retrain ≈ 1h40m; 28 guided evals ≈ 1h). Raw artifacts: <span class="mono">sets_res/va_table_v4_f005.json</span>, <span class="mono">va_table_v4_f01.json</span>, <span class="mono">uncond_pool_eval_v4.json</span>, <span class="mono">disc_gen_eval_f{005,01}{,_data}_v4.json</span>, logs <span class="mono">sets_log/v4_*.log</span>.</li>
 <li>Training identical to v2 except the canvas fix: <span class="mono">train_porto_bd.sh mask B gpu v4</span> (1 epoch, bs 32, lr 5e-4, drop_cond 0.1 — ori and dst are always dropped <i>jointly</i>, never individually).</li>
 <li>The conditional-eval script's output prefix is hard-coded <span class="mono">V2_</span>; its per-path CSVs under that prefix now hold v4 results (v2 aggregates preserved in <span class="mono">sets_log/v2_ctrl_mask.log</span> and the v3 report).</li>
+<li><b>s/path caveat</b>: with first-hitting the algorithmic NFE is block-size-independent (one forward per reveal, total ≈ generated length). The measured blk1 slowdown (0.082 vs ~0.033 s/path) is per-block implementation overhead — a CPU sync + Python stop-scan + attention-mask rebuild per block, paid per <i>token</i> at B=1 — plus batch-straggler synchronization; not an algorithmic advantage of larger blocks (no KV caching / parallel within-block commits are implemented).</li>
 <li>Old (pre-fix) checkpoints/discs/pools were left in place; nothing v4 overwrites them (distinct names). They can be deleted once this report is accepted.</li>
 </ul>
 </body>

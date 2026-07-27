@@ -51,6 +51,41 @@
 <li><b>유의점</b>: blk8(0.382→0.325), blk32(0.232→0.141)의 valid 하락은 단일 시드 학습 분산과 분리 불가; 다만 blk32의 길이 보정은 크게 개선(KS 0.278→0.120, 평균 16.7→25.6).</li>
 </ul>
 
+<h3>2b. Unconditional EM/PC — 각 샘플의 양 끝점을 자신의 OD로</h3>
+<p class="small">EM/PC는 <i>주어진</i> OD가 필요 없다: <span class="mono">evaluate_em_pc</span>는 생성 경로 자신의 (start, end)를 OD로 삼아 참조 최단경로 데이터에서 조회한다. 학습 데이터가 최단경로이므로 <b>uncond EM = "샘플이 자기 양 끝점 기준 최단경로인가"</b> — 분포 충실도 지표다. OD 커버리지(생성된 OD가 참조에 존재하는 비율)는 전 블록 ≈1.0이라 측정이 깨끗하다. 블록당 3,000개, seed 7. <b>novel∧EM</b>이 합성 데이터의 화폐: 알려진 OD의 <i>새로운</i> 최단경로, 즉 데이터셋에 없는 등장(等長) 대안 경로.</p>
+<table>
+<tr><th>blk</th><th class="num">valid</th><th class="num">EM</th><th class="num">PC</th><th class="num">novel</th><th class="num">valid∧novel</th><th class="num">novel∧EM</th><th class="num">OD cov</th></tr>
+<tr><td>1</td><td class="num">0.864</td><td class="num"><b>0.640</b></td><td class="num"><b>0.716</b></td><td class="num">0.406</td><td class="num">0.271</td><td class="num">0.046</td><td class="num">1.000</td></tr>
+<tr><td>2</td><td class="num">0.745</td><td class="num">0.629</td><td class="num">0.675</td><td class="num">0.425</td><td class="num">0.170</td><td class="num"><b>0.054</b></td><td class="num">1.000</td></tr>
+<tr><td>4</td><td class="num">0.633</td><td class="num">0.401</td><td class="num">0.481</td><td class="num">0.652</td><td class="num"><b>0.285</b></td><td class="num"><b>0.053</b></td><td class="num">0.999</td></tr>
+<tr><td>8</td><td class="num">0.346</td><td class="num">0.178</td><td class="num">0.230</td><td class="num">0.851</td><td class="num">0.197</td><td class="num">0.029</td><td class="num">0.998</td></tr>
+<tr><td>16</td><td class="num">0.197</td><td class="num">0.113</td><td class="num">0.141</td><td class="num">0.907</td><td class="num">0.104</td><td class="num">0.019</td><td class="num">0.997</td></tr>
+<tr><td>32</td><td class="num">0.130</td><td class="num">0.058</td><td class="num">0.080</td><td class="num">0.951</td><td class="num">0.081</td><td class="num">0.009</td><td class="num">0.998</td></tr>
+<tr><td>64</td><td class="num">0.105</td><td class="num">0.035</td><td class="num">0.056</td><td class="num">0.973</td><td class="num">0.078</td><td class="num">0.008</td><td class="num">0.995</td></tr>
+</table>
+<ul class="small">
+<li><b>최단경로 충실도는 blk1/2가 압도</b> (EM 0.63–0.64 vs blk4 0.40); novelty-품질 경계에서는 blk2/4가 근소 우위(novel∧EM 0.053–0.054 vs blk1 0.046; valid∧novel blk4 0.285 vs blk1 0.271).</li>
+<li><b>Novelty 해석 주의</b>: 이 데이터는 최단경로라 OD당 정답이 거의 유일 — <i>완벽한</i> 생성 모델일수록 novelty가 <i>낮게</i> 나온다. blk1의 복사는 부분적으로 분포를 잘 배운 결과이며, novelty 축 자체가 큰 블록에 유리하게 기울어 있음에도 그 우위는 절대값 ≤1%p다.</li>
+</ul>
+<h3>2c. Valid 생성물의 다양성 — 직관 검증</h3>
+<p class="small">원시 novelty는 블록과 함께 상승한다(0.406 → 0.973; 블록 내 mean-field 샘플링의 조합 다양성) — 그러나 invalid 경로의 다양성은 노이즈다. valid 부분집합으로 제한하고 동일 크기 실제 표본과 비교(지표: distinct-OD 비율, 사용된 고유 edge 수, edge 사용 Shannon 엔트로피, edge 집합의 평균 pairwise Jaccard 유사도 — 높을수록 서로 비슷):</p>
+<table>
+<tr><th></th><th class="num">n valid</th><th class="num">distinct OD</th><th class="num">edge 지지집합</th><th class="num">edge 엔트로피</th><th class="num">pairwise Jaccard</th></tr>
+<tr><td><b>real (20k)</b></td><td class="num">20,000</td><td class="num">1.000</td><td class="num"><b>3,856</b></td><td class="num"><b>10.62 b</b></td><td class="num"><b>0.0124</b></td></tr>
+<tr><td>blk1</td><td class="num">17,395</td><td class="num">0.995</td><td class="num"><b>3,793</b></td><td class="num"><b>10.54 b</b></td><td class="num"><b>0.0132</b></td></tr>
+<tr><td>blk2</td><td class="num">14,744</td><td class="num">0.996</td><td class="num">3,728</td><td class="num">10.47 b</td><td class="num">0.0151</td></tr>
+<tr><td>blk4</td><td class="num">12,338</td><td class="num">0.995</td><td class="num">3,753</td><td class="num">10.49 b</td><td class="num">0.0131</td></tr>
+<tr><td>blk8</td><td class="num">6,501</td><td class="num">0.996</td><td class="num">3,541</td><td class="num">10.30 b</td><td class="num">0.0149</td></tr>
+<tr><td>blk16</td><td class="num">4,046</td><td class="num">0.995</td><td class="num">3,273</td><td class="num">10.09 b</td><td class="num">0.0189</td></tr>
+<tr><td>blk32</td><td class="num">2,829</td><td class="num">0.995</td><td class="num">3,124</td><td class="num">9.99 b</td><td class="num">0.0186</td></tr>
+<tr><td>blk64</td><td class="num">2,080</td><td class="num">0.998</td><td class="num">2,889</td><td class="num">10.03 b</td><td class="num">0.0186</td></tr>
+</table>
+<ul class="small">
+<li><b>Validity로 조건화하면 다양성은 블록 크기와 함께 <i>감소</i></b> — 원시 novelty와 정반대: edge 지지집합 3,793 → 2,889, 엔트로피 10.54 → 10.03 b, 샘플 간 유사도 0.0132 → 0.0186. 선택 효과: 큰 B에서는 10–14%만 valid하고, 생존자들은 짧고 흔한 회랑에 응집한다.</li>
+<li><b>blk1의 valid 집합은 실제 분포의 다양성과 거의 일치</b> (실제 edge 지지집합의 98%, 엔트로피 −0.08 b, pairwise 유사도 거의 동일). 큰 블록의 겉보기 다양성은 대부분 invalid 노이즈의 다양성이다.</li>
+<li><b>블록 크기 선택에 대한 종합</b>: 품질·충실도·<i>유효</i> 다양성 모두 소블록 우위; 개방 생성에서 diffusion의 정량적 우위로 남은 것은 blk2–4의 근소한 novel∧EM 마진뿐. (앞서 측정한 샘플링 속도 차이는 알고리즘이 아니라 구현 오버헤드 — first-hitting NFE는 블록 크기와 무관; §7 참조.)</li>
+</ul>
+
 <h2>3. Conditional 계획 — held-out 실제 OD 쌍 (normal 세계)</h2>
 <p class="small">held-out 실제 최단경로 1,000쌍, 생성 시드 3개, mean±std (<span class="mono">eval_bd_sweep_controlled -suffix v4</span>). <b>arr</b>=목적지 도달; <b>v∧h</b>=valid∧hit. 모두 RAW.</p>
 <table>
@@ -134,6 +169,7 @@
 <li>파이프라인: <span class="mono">run_v4_all.sh</span>, 단일 tmux 체인, 2026-07-27 00:48–04:22 KST (Stage A 재학습 ≈1h40m; guided 평가 28개 ≈1h). 원자료: <span class="mono">sets_res/va_table_v4_f005.json</span>, <span class="mono">va_table_v4_f01.json</span>, <span class="mono">uncond_pool_eval_v4.json</span>, <span class="mono">disc_gen_eval_f{005,01}{,_data}_v4.json</span>, 로그 <span class="mono">sets_log/v4_*.log</span>.</li>
 <li>학습은 캔버스 수정 외 v2와 동일: <span class="mono">train_porto_bd.sh mask B gpu v4</span> (1 epoch, bs 32, lr 5e-4, drop_cond 0.1 — ori/dst는 항상 <i>동시에</i> drop, 개별 drop 없음).</li>
 <li>conditional 평가 스크립트의 출력 prefix가 <span class="mono">V2_</span>로 하드코딩되어 해당 per-path CSV는 현재 v4 결과를 담는다 (v2 집계는 <span class="mono">sets_log/v2_ctrl_mask.log</span>와 v3 보고서에 보존).</li>
+<li><b>s/path 주의</b>: first-hitting에서 알고리즘적 NFE는 블록 크기와 무관하다(reveal당 forward 1회, 총합 ≈ 생성 길이). 측정된 blk1의 느림(0.082 vs ~0.033 s/path)은 블록당 구현 오버헤드 — CPU 동기화 + 파이썬 정지 판정 루프 + attention mask 재구축을 B=1에서는 <i>토큰마다</i> 지불 — 와 배치 straggler 동기화 때문이며, 큰 블록의 알고리즘적 이점이 아니다 (KV 캐시·블록 내 병렬 확정 미구현).</li>
 <li>수정 전 체크포인트/disc/pool은 그대로 보존(모든 v4 산출물이 별도 이름). 본 보고서 확정 후 삭제 가능.</li>
 </ul>
 </body>
