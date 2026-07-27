@@ -243,10 +243,10 @@
 <li><b>제거 edge 사용률은 base 수준에 머문다</b>(~4.9–5.1% vs base ~5%) — 위치별 틸트는 시나리오 제약을 거의 인코딩하지 못하며, 그 수치를 ~3%로 낮추는 것은 IW의 Lemma-3 마스킹이다.</li>
 </ul>
 <h3>5.6 실행 시간과 채점 호출 수 — 동일 조건 측정</h3>
-<p class="small">과거 수치는 백본과 배치 크기가 달라 본 보고서용으로 재측정했다: <b>동일 OD 쌍, 동일 배치(100), 동일 시드, 유휴 GPU 하나에서 한 번에 한 방법씩, CUDA 동기화</b>(<span class="mono">time_guidance.py</span>, 200경로). 앞서 관측된 D-CBG-exact 0.63 s/path는 4개 작업이 4 GPU를 나눠 쓴 경합 값이고, 단독 실행에서는 0.28–0.84다. <b>채점 호출</b> = 경로당 판별자/분류기 시퀀스 평가 횟수로, 구현과 무관한 비용이다(L ≈ 22 reveals): IW = L·n<sub>is</sub>, D-CBG exact = L·V, first-order = L회 forward+backward.</p>
+<p class="small">과거 수치는 백본과 배치 크기가 달라 본 보고서용으로 재측정했다: <b>동일 OD 쌍, 동일 배치(100), 동일 시드, 유휴 GPU 하나에서 한 번에 한 방법씩, CUDA 동기화</b>(<span class="mono">time_guidance.py</span>, 200경로). <b>정의</b>: 생성 호출의 총 wall-clock을 경로 수로 나눈 값, 즉 <b>100경로를 동시에 생성할 때의 경로당 분할 비용</b>이다 — 경로 하나만 단독 생성할 때의 지연이 <i>아니며</i>, 그 경우 GPU 활용도가 낮아 경로당 비용은 훨씬 커진다. 측정 범위는 생성뿐이다(모델 forward + 판별자/분류기 채점 + 샘플러 오버헤드). 모델·데이터 로딩, 후처리, EM/PC 채점은 제외된다. 그래서 평가 실행이 blk4 D-CBG-exact에 대해 출력한 0.63 s/path와 다르다: 그 값은 <span class="mono">eval_dcbg.py</span>의 <span class="mono">sec_per_path</span>로, 타이머가 생성에 더해 P1/P3 스플라이싱과 EM/PC 채점까지 포함하며(게다가 4개 프로세스가 CPU를 경합) 여기 생성 단독 0.313과 대비된다. <b>Warm-up</b>: 프로세스의 첫 측정 호출은 CUDA 컨텍스트와 커널 오토튜닝 비용을 흡수한다(실측: blk1 첫 배치 0.0146 s/path vs 이후 0.0047). blk1 base 칸은 warm-up 이후 값으로 보고하며, 나머지 칸은 이미 warm-up 이후였다. <b>§3의 s/path 컬럼과는 비교 불가</b>다 — 그쪽은 <span class="mono">eval_bd_sweep_controlled.py</span> 값으로, 생성에 더해 1,000경로에 대한 EM/PC·DTW·길이 채점까지 포함한다. <b>채점 호출</b> = 경로당 판별자/분류기 시퀀스 평가 횟수로, 구현과 무관한 비용이다(L ≈ 22 reveals): IW = L·n<sub>is</sub>, D-CBG exact = L·V, first-order = L회 forward+backward.</p>
 <table>
 <tr><th>blk</th><th class="num">base</th><th class="num">IW</th><th class="num">adj+IW</th><th class="num">D-CBG first-order</th><th class="num">D-CBG exact</th></tr>
-<tr><td>1</td><td class="num">0.0096</td><td class="num">0.0245</td><td class="num">0.0956</td><td class="num">0.0147</td><td class="num">0.2785</td></tr>
+<tr><td>1</td><td class="num">0.0047</td><td class="num">0.0245</td><td class="num">0.0956</td><td class="num">0.0147</td><td class="num">0.2785</td></tr>
 <tr><td>2</td><td class="num">0.0043</td><td class="num">0.0246</td><td class="num">0.0610</td><td class="num">0.0148</td><td class="num">0.2833</td></tr>
 <tr><td>4</td><td class="num">0.0043</td><td class="num">0.0269</td><td class="num">0.0270</td><td class="num">0.0152</td><td class="num">0.3131</td></tr>
 <tr><td>8</td><td class="num">0.0047</td><td class="num">0.0320</td><td class="num">0.0320</td><td class="num">0.0137</td><td class="num">0.3776</td></tr>
@@ -258,7 +258,7 @@
 <ul class="small">
 <li><b>Exact D-CBG는 IW의 11–13배 비용</b>인데 이득은 더 작다(blk4: 0.313 vs 0.027 s/path; blk64 0.836 vs 0.067). 격차는 구조적이다 — reveal당 V = 1,393개 치환을 전부 채점하는 반면 IW는 n<sub>is</sub> = 100개 표본 후보만 채점한다.</li>
 <li><b>first-order는 가장 싼 guided 옵션(0.014–0.017 s/path)이지만 얻는 게 없다</b> — IW보다 싸지만 통계적으로 unguided base와 구분되지 않는다.</li>
-<li><b>두 guided 계열 모두 블록 크기에 따라 완만히 증가</b>(캔버스가 길어지고 reveal 수는 그대로), <b>예외는 blk1/2의 adj+IW</b>(0.096 / 0.061 s/path): 인접성 마스킹 탓에 목적지를 지나치는 경로가 많아 배치당 reveal이 늘어난다(blk1에서 100 vs 48) — §4.1에서 arrival 0.567로 나타나는 바로 그 효과다.</li>
+<li><b>base 생성은 warm-up을 제외하면 블록 크기에 거의 평평하다</b>(0.0042–0.0072 s/path) — first-hitting은 B와 무관하게 공개 토큰당 forward 1회를 쓰고, 늘어나는 캔버스 길이만 비용을 더한다. <b>두 guided 계열도 같은 이유로 완만히 증가</b>하며, <b>예외는 blk1/2의 adj+IW</b>(0.096 / 0.061 s/path): 인접성 마스킹 탓에 목적지를 지나치는 경로가 많아 배치당 reveal이 늘어난다(blk1에서 100 vs 48) — §4.1에서 arrival 0.567로 나타나는 바로 그 효과다.</li>
 <li><b>주의</b>: wall-clock은 본 구현(KV 캐시·블록 내 병렬 확정 미구현)과 이 GPU에 종속된다. 이식 가능한 비교는 채점 호출 행이다.</li>
 </ul>
 

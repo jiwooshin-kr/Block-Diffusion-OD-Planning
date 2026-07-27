@@ -24,80 +24,114 @@
 </head>
 <body>
 <h1>판별자 유효성 · 일반화 분석 — v4</h1>
-<p class="small">2026-07-27 · <span class="mono">RESULTS_BD_V4_KO.pdf</span>의 자매 문서. 검증 질문: <b>unseen(e99) 판별자는 새 시나리오로 정말 일반화되는가, 아니면 downstream의 seen≈unseen 동등성이 무언가를 가리고 있는가?</b> 본문 disc는 모두 v4 라운드(<span class="mono">_v4</span>, EOS 수정 백본의 pool로 학습)이며, 수정 전(v2) 수치는 교란 사례 연구(§4)에만 등장한다.</p>
+<p class="small">2026-07-27 · <span class="mono">RESULTS_BD_V4_KO.pdf</span>의 자매 문서. 검증 질문: <b>unseen(e99) 판별자는 새 시나리오로 정말 일반화되는가, 아니면 downstream의 seen≈unseen 동등성이 무언가를 가리고 있는가?</b> 본문 disc는 모두 v4 라운드(<span class="mono">_v4</span>, EOS 수정 백본의 pool로 학습)이며, 수정 전(v2) 수치는 교란 사례 연구(§4)에만 등장한다. <b>본문 지표는 분류 정확도</b>이고, 동일 실험의 AUC는 부록 A에 둔다.</p>
 
 <h2>1. 판별자의 역할과 분할 위생</h2>
 <ul class="small">
 <li><b>역할</b>: guidance에는 블록 조건부 비율 w = q<sub>except</sub>(x₀|x<sup>&lt;b</sup>)/p<sub>θ</sub>(x₀|x<sup>&lt;b</sup>)가 필요하고, disc D는 clean 부분경로 [prefix ∥ block]에서 D/(1−D)로 이를 추정한다. 시나리오 인접행렬 A<sub>scn</sub>이 입력으로 들어간다(GraphSAGE 임베딩 + 위치별 edge-existence 피처), logit은 ℓ = 4·tanh(z/4)로 유계.</li>
-<li><b>Seen (e0)</b>: positive = except_0 경로 중 평가 예약 1,000행을 <i>제외한</i> 나머지의 1% (<span class="mono">RandomState(777)</span> 순열, 앞 1,000행 예약). <b>Unseen (e99)</b>: positive = except 1–99만(시나리오별 1%), except_0는 어떤 gradient에도 기여하지 않음. 학습 중 출력되는 except_0 val acc는 모니터링용 진단일 뿐(고정 4,000 스텝, 모델 선택 없음).</li>
+<li><b>Seen (e0)</b>: positive = except_0 경로 중 평가 예약 1,000행을 <i>제외한</i> 나머지의 1% = 19,308경로 (<span class="mono">RandomState(777)</span> 순열). <b>Unseen (e99)</b>: positive = except 1–99만(시나리오별 1% × 99 = 1,911,492경로), except_0는 어떤 gradient에도 기여하지 않음. 학습 중 출력되는 except_0 val acc는 모니터링용 진단일 뿐(고정 4,000 스텝, 모델 선택 없음).</li>
 <li><b>아래 모든 평가는 두 disc 모두에게 held-out</b>: except_0 probe는 예약 행, except_1 probe는 e99의 1% 학습 슬라이스 밖 행을 쓰고, negative는 신선하다(학습용 seed-1 pool과 분리된 seed-99 pool; data-negative probe는 신선한 normal 표본).</li>
 </ul>
 
-<h2>2. 대칭 probe 설계</h2>
-<p class="small">두 probe 시나리오가 역할을 뒤집는다: <b>except_0</b>에서는 e0가 in-scenario·e99가 zero-shot, <b>except_1</b>에서는 e99가 in-scenario(held-out 행)·e0가 zero-shot. 일반화가 진짜라면 in-scenario 우위는 작아야 하고 probe 방향에 따라 뒤집혀야 한다 — 실제로 정확히 그렇게 나타난다. 지표: AUC, accuracy@0, 동일 입력에 대한 두 disc의 logit Pearson 상관.</p>
+<h2>2. 대칭 probe 설계와 지표</h2>
+<p class="small">두 probe 시나리오가 역할을 뒤집는다: <b>except_0</b>에서는 e0가 in-scenario·e99가 zero-shot, <b>except_1</b>에서는 e99가 in-scenario(held-out 행)·e0가 zero-shot. 일반화가 진짜라면 in-scenario 우위는 작아야 하고 probe 방향에 따라 뒤집혀야 한다.</p>
+<ul class="small">
+<li><b>정확도</b> = positive 1,000 + negative 1,000의 균형 집합에서 logit &gt; 0 (즉 D &gt; 0.5, BCE의 자연 임계값 — 튜닝하지 않음)으로 판정했을 때의 적중률. <b>chance = 0.500.</b></li>
+<li><b>zero-shot 하락</b> = (자기 시나리오가 아닌 probe의 정확도) − (자기 시나리오 probe의 정확도). e0는 exc1 − exc0, e99는 exc0 − exc1. 음수가 클수록 시나리오를 옮겼을 때 손해가 크다는 뜻.</li>
+<li><b>logit Pearson</b> = 동일 입력 2,000개에 대한 두 disc logit의 상관 — 같은 함수를 학습했는지의 직접 증거.</li>
+</ul>
 
 <h2>3. Model-negative disc (블록별): positive = 실제 except 경로, negative = 신선한 unconditional 생성</h2>
 <h3>3.1 fam 0.05</h3>
 <table>
-<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">AUC, except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC, except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">logit Pearson</th></tr>
-<tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">exc0</th><th class="num">exc1</th></tr>
-<tr><td>1</td><td class="num">0.870</td><td class="num">0.833</td><td class="num">0.787</td><td class="num">0.848</td><td class="num">0.904</td><td class="num">0.810</td></tr>
-<tr><td>2</td><td class="num">0.890</td><td class="num">0.872</td><td class="num">0.843</td><td class="num">0.887</td><td class="num">0.913</td><td class="num">0.837</td></tr>
-<tr><td>4</td><td class="num">0.897</td><td class="num">0.888</td><td class="num">0.850</td><td class="num">0.901</td><td class="num">0.925</td><td class="num">0.825</td></tr>
-<tr><td>8</td><td class="num">0.943</td><td class="num">0.931</td><td class="num">0.898</td><td class="num">0.932</td><td class="num">0.956</td><td class="num">0.866</td></tr>
-<tr><td>16</td><td class="num">0.951</td><td class="num">0.948</td><td class="num">0.930</td><td class="num">0.948</td><td class="num">0.970</td><td class="num">0.947</td></tr>
-<tr><td>32</td><td class="num">0.956</td><td class="num">0.951</td><td class="num">0.945</td><td class="num">0.952</td><td class="num">0.963</td><td class="num">0.950</td></tr>
-<tr><td>64</td><td class="num">0.957</td><td class="num">0.958</td><td class="num">0.946</td><td class="num">0.957</td><td class="num">0.976</td><td class="num">0.968</td></tr>
+<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">정확도, except_0 probe (e0 in-scn)</th><th colspan="2" style="text-align:center">정확도, except_1 probe (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot 하락</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>1</td><td class="num">0.760</td><td class="num">0.741</td><td class="num">0.677</td><td class="num">0.750</td><td class="num"><b>−0.083</b></td><td class="num"><b>−0.010</b></td><td class="num">0.904 / 0.810</td></tr>
+<tr><td>2</td><td class="num">0.772</td><td class="num">0.775</td><td class="num">0.724</td><td class="num">0.795</td><td class="num"><b>−0.048</b></td><td class="num"><b>−0.020</b></td><td class="num">0.913 / 0.837</td></tr>
+<tr><td>4</td><td class="num">0.802</td><td class="num">0.809</td><td class="num">0.752</td><td class="num">0.811</td><td class="num"><b>−0.050</b></td><td class="num"><b>−0.002</b></td><td class="num">0.925 / 0.825</td></tr>
+<tr><td>8</td><td class="num">0.857</td><td class="num">0.858</td><td class="num">0.794</td><td class="num">0.848</td><td class="num"><b>−0.063</b></td><td class="num"><b>+0.010</b></td><td class="num">0.956 / 0.866</td></tr>
+<tr><td>16</td><td class="num">0.875</td><td class="num">0.875</td><td class="num">0.859</td><td class="num">0.873</td><td class="num"><b>−0.016</b></td><td class="num"><b>+0.002</b></td><td class="num">0.970 / 0.947</td></tr>
+<tr><td>32</td><td class="num">0.879</td><td class="num">0.880</td><td class="num">0.858</td><td class="num">0.872</td><td class="num"><b>−0.022</b></td><td class="num"><b>+0.008</b></td><td class="num">0.963 / 0.950</td></tr>
+<tr><td>64</td><td class="num">0.889</td><td class="num">0.900</td><td class="num">0.871</td><td class="num">0.890</td><td class="num"><b>−0.018</b></td><td class="num"><b>+0.010</b></td><td class="num">0.976 / 0.968</td></tr>
 </table>
 <h3>3.2 fam 0.1</h3>
 <table>
-<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">AUC, except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC, except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">logit Pearson</th></tr>
-<tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">exc0</th><th class="num">exc1</th></tr>
-<tr><td>1</td><td class="num">0.947</td><td class="num">0.935</td><td class="num">0.902</td><td class="num">0.926</td><td class="num">0.950</td><td class="num">0.877</td></tr>
-<tr><td>2</td><td class="num">0.959</td><td class="num">0.953</td><td class="num">0.914</td><td class="num">0.940</td><td class="num">0.963</td><td class="num">0.920</td></tr>
-<tr><td>4</td><td class="num">0.962</td><td class="num">0.948</td><td class="num">0.929</td><td class="num">0.946</td><td class="num">0.970</td><td class="num">0.933</td></tr>
-<tr><td>8</td><td class="num">0.977</td><td class="num">0.971</td><td class="num">0.946</td><td class="num">0.965</td><td class="num">0.975</td><td class="num">0.929</td></tr>
-<tr><td>16</td><td class="num">0.981</td><td class="num">0.978</td><td class="num">0.962</td><td class="num">0.972</td><td class="num">0.980</td><td class="num">0.959</td></tr>
-<tr><td>32</td><td class="num">0.977</td><td class="num">0.973</td><td class="num">0.964</td><td class="num">0.971</td><td class="num">0.981</td><td class="num">0.965</td></tr>
-<tr><td>64</td><td class="num">0.983</td><td class="num">0.977</td><td class="num">0.967</td><td class="num">0.974</td><td class="num">0.980</td><td class="num">0.973</td></tr>
+<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">정확도, except_0 probe (e0 in-scn)</th><th colspan="2" style="text-align:center">정확도, except_1 probe (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot 하락</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>1</td><td class="num">0.846</td><td class="num">0.838</td><td class="num">0.795</td><td class="num">0.838</td><td class="num"><b>−0.050</b></td><td class="num"><b>0.000</b></td><td class="num">0.950 / 0.877</td></tr>
+<tr><td>2</td><td class="num">0.869</td><td class="num">0.854</td><td class="num">0.819</td><td class="num">0.844</td><td class="num"><b>−0.050</b></td><td class="num"><b>+0.010</b></td><td class="num">0.963 / 0.920</td></tr>
+<tr><td>4</td><td class="num">0.882</td><td class="num">0.863</td><td class="num">0.833</td><td class="num">0.863</td><td class="num"><b>−0.049</b></td><td class="num"><b>0.000</b></td><td class="num">0.970 / 0.933</td></tr>
+<tr><td>8</td><td class="num">0.911</td><td class="num">0.902</td><td class="num">0.855</td><td class="num">0.887</td><td class="num"><b>−0.056</b></td><td class="num"><b>+0.015</b></td><td class="num">0.975 / 0.929</td></tr>
+<tr><td>16</td><td class="num">0.918</td><td class="num">0.908</td><td class="num">0.885</td><td class="num">0.904</td><td class="num"><b>−0.033</b></td><td class="num"><b>+0.004</b></td><td class="num">0.980 / 0.959</td></tr>
+<tr><td>32</td><td class="num">0.912</td><td class="num">0.908</td><td class="num">0.899</td><td class="num">0.903</td><td class="num"><b>−0.013</b></td><td class="num"><b>+0.005</b></td><td class="num">0.981 / 0.965</td></tr>
+<tr><td>64</td><td class="num">0.934</td><td class="num">0.926</td><td class="num">0.905</td><td class="num">0.916</td><td class="num"><b>−0.029</b></td><td class="num"><b>+0.010</b></td><td class="num">0.980 / 0.973</td></tr>
 </table>
 <ul class="small">
-<li><b>In-scenario 우위가 probe 방향에 따라 뒤집히며 크기가 작다</b>(AUC 0.005–0.06): 어느 쪽이든 zero-shot 입장이 약간 손해를 보는 패턴이 양방향·양 family에서 재현 — 암기가 아닌 진짜 전이의 signature.</li>
-<li><b>이 과제에서 전이가 저렴한 것은 구조적</b>: 판별 신호의 대부분 — <i>입력</i> 인접행렬 대비 edge 합법성, 모델 생성 artifact — 이 시나리오-무관이다. disc가 A<sub>scn</sub>을 입력으로 읽으므로 "주어진 인접행렬에 없는 edge ⇒ 가짜" 규칙은 어느 시나리오에나 적용된다.</li>
-<li><b>블록 간 AUC 수준은 disc가 아니라 백본을 반영</b>: negative pool의 invalid-edge 비율(v4: blk1 2.3% → blk64 11.4%)과 함께 오른다. 블록 간 AUC 비교는 p<sub>θ</sub> 품질(negative 난이도)에 대한 진술이다 — §4 참조.</li>
-<li>fam 0.1의 AUC가 일괄 높은 것은 제거 edge가 2배라 시나리오 신호가 강하기 때문.</li>
+<li><b>e99는 시나리오를 옮겨도 사실상 손해가 없다</b>: zero-shot 하락이 fam 0.05에서 −0.020…+0.010, fam 0.1에서 0.000…+0.015. 반면 <b>단일 시나리오 e0는 일관되게 손해</b>(fam 0.05 −0.016…−0.083, fam 0.1 −0.013…−0.056)를 본다. 즉 자기 시나리오에서의 우위는 e0에게만 있고 그마저 작다(exc0에서 e0−e99 = −0.011…+0.019).</li>
+<li><b>전이가 저렴한 것은 구조적</b>: 판별 신호의 대부분 — <i>입력</i> 인접행렬 대비 edge 합법성, 모델 생성 artifact — 이 시나리오-무관이다. disc가 A<sub>scn</sub>을 입력으로 읽으므로 "주어진 인접행렬에 없는 edge ⇒ 가짜" 규칙은 어느 시나리오에나 적용된다.</li>
+<li><b>블록 간 정확도 수준은 disc가 아니라 백본을 반영</b>: negative pool의 invalid-edge 비율(v4: blk1 2.3% → blk64 11.4%)과 함께 오른다. 블록 간 비교는 p<sub>θ</sub> 품질(negative 난이도)에 대한 진술이다 — §4 참조.</li>
+<li>fam 0.1이 일괄 높은 것은 제거 edge가 2배라 시나리오 신호가 강하기 때문.</li>
 </ul>
 
 <h2>4. Negative pool 교란 — v2 blk1 사례 연구</h2>
-<p class="small">수정 전(v2) 백본에서는 blk1 disc가 <i>최고</i> AUC(0.985), blk2가 최저(0.881)로 비단조적이었다. 원인은 disc가 아니라 negative pool: v2 blk1의 unconditional 생성은 퇴화 상태였고(전량 캔버스 캡 도달, 길이 101 vs 실제 23.2; invalid edge 50.5%), 그 negative는 <b>길이 지름길</b>만으로 구분 가능했다. EOS 수정 후 blk1 pool이 정상화되자(길이 25.2; invalid 2.3%) blk1 AUC는 정직한 0.870으로 내려왔고, 이제 AUC 순서는 전 블록에서 pool의 invalid-edge 비율에 단조적이다. 교훈: model-negative 학습에서는 <b>블록별 AUC가 disc 품질과 생성 품질을 뒤섞는다</b>; 교란 없는 비교는 같은 pool을 공유하는 블록 내 seen-vs-unseen뿐이다.</p>
+<p class="small">수정 전(v2) 백본에서는 blk1 disc가 <i>최고</i> 정확도(0.943)이고 blk2가 최저(0.766)인 비단조 패턴이었다. 원인은 disc가 아니라 negative pool: v2 blk1의 unconditional 생성은 퇴화 상태였고(전량 캔버스 캡 도달, 길이 101 vs 실제 23.2; invalid edge 50.5%), 그 negative는 <b>길이 지름길</b>만으로 구분 가능했다. EOS 수정 후 blk1 pool이 정상화되자(길이 25.2; invalid 2.3%) blk1 정확도는 정직한 0.760으로 내려왔고, 이제 정확도 순서는 전 블록에서 pool의 invalid-edge 비율에 단조적이다. 교훈: model-negative 학습에서는 <b>블록별 정확도가 disc 품질과 생성 품질을 뒤섞는다</b>; 교란 없는 비교는 같은 pool을 공유하는 블록 내 seen-vs-unseen뿐이다.</p>
 <table>
-<tr><th></th><th class="num">pool 길이 (실제 23.2)</th><th class="num">pool invE</th><th class="num">cap%</th><th class="num">AUC e0, exc0</th></tr>
-<tr><td>v2 blk1 (수정 전)</td><td class="num">101.0±0.0</td><td class="num">50.5%</td><td class="num">100%</td><td class="num">0.985 <span class="muted">(길이 지름길)</span></td></tr>
-<tr><td>v4 blk1 (수정 후)</td><td class="num">25.2±12.5</td><td class="num">2.3%</td><td class="num">0.9%</td><td class="num">0.870 <span class="muted">(정직)</span></td></tr>
+<tr><th></th><th class="num">pool 길이 (실제 23.2)</th><th class="num">pool invE</th><th class="num">cap%</th><th class="num">정확도 e0, exc0</th></tr>
+<tr><td>v2 blk1 (수정 전)</td><td class="num">101.0±0.0</td><td class="num">50.5%</td><td class="num">100%</td><td class="num">0.943 <span class="muted">(길이 지름길)</span></td></tr>
+<tr><td>v4 blk1 (수정 후)</td><td class="num">25.2±12.5</td><td class="num">2.3%</td><td class="num">0.9%</td><td class="num">0.760 <span class="muted">(정직)</span></td></tr>
 </table>
 
 <h2>5. Data-negative disc (블록 무관): 엄격한 일반화 probe</h2>
 <p class="small">positive = 실제 except 경로, negative = <b>실제 normal 경로</b> — real vs real이므로 시나리오-무관 지름길(모델 artifact, 길이)이 전부 제거되고 <b>시나리오 고유 정보</b>(어떤 edge가 제거됐고 경로가 어떻게 우회하는가)만 두 클래스를 가른다. 방식당 disc 1개, 블록별 pool이 없어 §4 교란도 없다. 이 disc들은 백본과 무관하므로 v2/v4에서 동일하다(같은 시드).</p>
 <table>
-<tr><th rowspan="2">family</th><th colspan="2" style="text-align:center">AUC, except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC, except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot 하락</th><th class="num" rowspan="2">Pearson exc0 / exc1</th></tr>
-<tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
-<tr><td>0.05</td><td class="num">0.845</td><td class="num">0.813</td><td class="num">0.745</td><td class="num">0.835</td><td class="num"><b>−0.100</b></td><td class="num"><b>−0.022</b></td><td class="num">0.913 / 0.737</td></tr>
-<tr><td>0.1</td><td class="num">0.951</td><td class="num">0.932</td><td class="num">0.867</td><td class="num">0.914</td><td class="num"><b>−0.084</b></td><td class="num"><b>+0.018</b></td><td class="num">0.956 / 0.834</td></tr>
+<tr><th rowspan="2">family</th><th colspan="2" style="text-align:center">정확도, except_0 probe (e0 in-scn)</th><th colspan="2" style="text-align:center">정확도, except_1 probe (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot 하락</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>0.05</td><td class="num">0.726</td><td class="num">0.712</td><td class="num">0.641</td><td class="num">0.735</td><td class="num"><b>−0.085</b></td><td class="num"><b>−0.023</b></td><td class="num">0.913 / 0.737</td></tr>
+<tr><td>0.1</td><td class="num">0.850</td><td class="num">0.837</td><td class="num">0.751</td><td class="num">0.810</td><td class="num"><b>−0.099</b></td><td class="num"><b>+0.026</b></td><td class="num">0.956 / 0.834</td></tr>
 </table>
 <ul class="small">
-<li><b>이 probe가 두 학습 방식을 가른다</b>: 단일 시나리오 e0는 zero-shot에서 크게 하락(−0.100/−0.084), 99-시나리오 e99는 거의 평탄(−0.022/+0.018). <b>시나리오 고유 정보의 일반화는 다중 시나리오 학습의 산물</b>이며, 시나리오 하나로는 인접행렬 조건화 규칙이 충분히 학습되지 않는다.</li>
+<li><b>이 probe가 두 학습 방식을 가른다</b>: 단일 시나리오 e0는 zero-shot에서 정확도 −0.085/−0.099로 떨어지고, 99-시나리오 e99는 −0.023/+0.026로 평탄하다. <b>시나리오 고유 정보의 일반화는 다중 시나리오 학습의 산물</b>이며, 시나리오 하나로는 인접행렬 조건화 규칙이 충분히 학습되지 않는다.</li>
+<li>과제가 어려워진 만큼 절대 수준도 낮다(fam 0.05 e0 zero-shot 0.641, chance 0.500 대비 +0.14): 실제 경로 두 개를 놓고 "어느 시나리오에서 나왔는가"를 맞히는 것은 원래 어려운 문제다.</li>
 <li>zero-shot 측에서 logit 상관도 하락(exc1: 0.737/0.834) — 과제가 시나리오-고유해지면 두 disc는 실제로 다른 함수다.</li>
 </ul>
 
 <h2>6. 그럼에도 downstream에서 seen ≈ unseen인 이유</h2>
 <ul class="small">
 <li><b>Guidance가 배치하는 것은 model-negative disc</b>이고, 그 신호는 §3처럼 거의 무료로 전이된다 — §5의 어려운 probe는 파이프라인이 배치하지 않는 변형(v3 보고서 §4.1b의 ablation)에 관한 것.</li>
-<li><b>Self-normalized IS가 calibration을 소거</b>: 가중치 w<sub>n</sub> = exp(γℓ<sub>n</sub>)은 w<sub>n</sub>/Σw<sub>m</sub> 형태로만 쓰이므로, zero-shot 전이의 주된 손상인 상수 logit 오프셋(accuracy@0가 AUC보다 훨씬 크게 하락)은 정확히 약분된다. 남는 것은 순위/상대차뿐이고, 그것은 전이된다(AUC 격차 ≤0.05).</li>
+<li><b>Self-normalized IS가 calibration을 소거</b>: 가중치 w<sub>n</sub> = exp(γℓ<sub>n</sub>)은 w<sub>n</sub>/Σw<sub>m</sub> 형태로만 쓰이므로 상수 logit 오프셋은 정확히 약분된다. 실제로 남는 손상은 순위 손상뿐이고, 그것은 작다(배치되는 e99 disc의 zero-shot 정확도 하락 ≤0.020, AUC 하락 ≤0.015 — 부록 A).</li>
 <li><b>Guidance 시점의 채점 대상은 모델 후보들</b>, 즉 model-negative disc가 학습한 바로 그 분포다 — 배치된 disc가 용도에 정합.</li>
 </ul>
 
 <h2>7. 결론</h2>
-<p>Downstream에서 관측된 seen/unseen 동등성(v∧a 격차: fam 0.05 ≤0.015, fam 0.1 ≤0.003, 전 블록)은 완전히 설명된다: (1) 배치된 model-negative 판별자는 판별 신호가 구조적으로 시나리오-무관이고 인접행렬이 입력이므로 전이되며, (2) SNIS guidance는 zero-shot 전이가 실제로 유발하는 calibration 이동에 불변이고, (3) 독립적으로, 엄격한 real-vs-real probe는 e99 학습 방식이 단일 시나리오 학습은 얻지 못하는 전이 가능한 시나리오-고유 지식을 획득함을 보인다. disc 지표 해석의 유일한 주의점 — 블록별 AUC는 negative pool 난이도를 반영 — 은 v2→v4 blk1 사례로 실증·해소되었다.</p>
+<p>Downstream에서 관측된 seen/unseen 동등성(v∧a 격차: fam 0.05 ≤0.015, fam 0.1 ≤0.003, 전 블록)은 완전히 설명된다: (1) 배치된 model-negative 판별자는 판별 신호가 구조적으로 시나리오-무관이고 인접행렬이 입력이므로 전이되며(e99의 zero-shot 정확도 하락 ≤0.020), (2) SNIS guidance는 zero-shot 전이가 유발하는 calibration 이동에 불변이고, (3) 독립적으로, 엄격한 real-vs-real probe는 e99 학습 방식이 단일 시나리오 학습은 얻지 못하는 전이 가능한 시나리오-고유 지식을 획득함을 보인다(−0.023 vs −0.085). disc 지표 해석의 유일한 주의점 — 블록별 수치는 negative pool 난이도를 반영 — 은 v2→v4 blk1 사례로 실증·해소되었다.</p>
+
+<h2>부록 A. 동일 실험의 AUC</h2>
+<p class="small">정확도는 임계값 0(D = 0.5)에 고정된 지표라 상수 logit 오프셋에 민감하다. SNIS guidance는 그 오프셋에 불변이므로(§6) 이론적으로는 순위 지표인 AUC가 더 정합하고, 정확도는 읽기 쉬운 요약이다. 두 지표는 같은 결론을 준다.</p>
+<h3>A.1 Model-negative, fam 0.05</h3>
+<table>
+<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">AUC, except_0 probe (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC, except_1 probe (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot 하락</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>1</td><td class="num">0.870</td><td class="num">0.833</td><td class="num">0.787</td><td class="num">0.848</td><td class="num"><b>−0.083</b></td><td class="num"><b>−0.015</b></td><td class="num">0.904 / 0.810</td></tr>
+<tr><td>2</td><td class="num">0.890</td><td class="num">0.872</td><td class="num">0.843</td><td class="num">0.887</td><td class="num"><b>−0.046</b></td><td class="num"><b>−0.015</b></td><td class="num">0.913 / 0.837</td></tr>
+<tr><td>4</td><td class="num">0.897</td><td class="num">0.888</td><td class="num">0.850</td><td class="num">0.901</td><td class="num"><b>−0.047</b></td><td class="num"><b>−0.013</b></td><td class="num">0.925 / 0.825</td></tr>
+<tr><td>8</td><td class="num">0.943</td><td class="num">0.931</td><td class="num">0.898</td><td class="num">0.932</td><td class="num"><b>−0.045</b></td><td class="num"><b>−0.002</b></td><td class="num">0.956 / 0.866</td></tr>
+<tr><td>16</td><td class="num">0.951</td><td class="num">0.948</td><td class="num">0.930</td><td class="num">0.948</td><td class="num"><b>−0.021</b></td><td class="num"><b>0.000</b></td><td class="num">0.970 / 0.947</td></tr>
+<tr><td>32</td><td class="num">0.956</td><td class="num">0.951</td><td class="num">0.945</td><td class="num">0.952</td><td class="num"><b>−0.011</b></td><td class="num"><b>−0.001</b></td><td class="num">0.963 / 0.950</td></tr>
+<tr><td>64</td><td class="num">0.957</td><td class="num">0.958</td><td class="num">0.946</td><td class="num">0.957</td><td class="num"><b>−0.012</b></td><td class="num"><b>+0.001</b></td><td class="num">0.976 / 0.968</td></tr>
+</table>
+<h3>A.2 Model-negative, fam 0.1</h3>
+<table>
+<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">AUC, except_0 probe (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC, except_1 probe (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot 하락</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>1</td><td class="num">0.947</td><td class="num">0.935</td><td class="num">0.902</td><td class="num">0.926</td><td class="num"><b>−0.045</b></td><td class="num"><b>+0.010</b></td><td class="num">0.950 / 0.877</td></tr>
+<tr><td>2</td><td class="num">0.959</td><td class="num">0.953</td><td class="num">0.914</td><td class="num">0.940</td><td class="num"><b>−0.045</b></td><td class="num"><b>+0.013</b></td><td class="num">0.963 / 0.920</td></tr>
+<tr><td>4</td><td class="num">0.962</td><td class="num">0.948</td><td class="num">0.929</td><td class="num">0.946</td><td class="num"><b>−0.032</b></td><td class="num"><b>+0.001</b></td><td class="num">0.970 / 0.933</td></tr>
+<tr><td>8</td><td class="num">0.977</td><td class="num">0.971</td><td class="num">0.946</td><td class="num">0.965</td><td class="num"><b>−0.031</b></td><td class="num"><b>+0.006</b></td><td class="num">0.975 / 0.929</td></tr>
+<tr><td>16</td><td class="num">0.981</td><td class="num">0.978</td><td class="num">0.962</td><td class="num">0.972</td><td class="num"><b>−0.019</b></td><td class="num"><b>+0.006</b></td><td class="num">0.980 / 0.959</td></tr>
+<tr><td>32</td><td class="num">0.977</td><td class="num">0.973</td><td class="num">0.964</td><td class="num">0.971</td><td class="num"><b>−0.013</b></td><td class="num"><b>+0.002</b></td><td class="num">0.981 / 0.965</td></tr>
+<tr><td>64</td><td class="num">0.983</td><td class="num">0.977</td><td class="num">0.967</td><td class="num">0.974</td><td class="num"><b>−0.017</b></td><td class="num"><b>+0.004</b></td><td class="num">0.980 / 0.973</td></tr>
+</table>
+<h3>A.3 Data-negative</h3>
+<table>
+<tr><th rowspan="2">family</th><th colspan="2" style="text-align:center">AUC, except_0 probe (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC, except_1 probe (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot 하락</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>0.05</td><td class="num">0.845</td><td class="num">0.813</td><td class="num">0.745</td><td class="num">0.835</td><td class="num"><b>−0.100</b></td><td class="num"><b>−0.021</b></td><td class="num">0.913 / 0.737</td></tr>
+<tr><td>0.1</td><td class="num">0.951</td><td class="num">0.932</td><td class="num">0.867</td><td class="num">0.914</td><td class="num"><b>−0.084</b></td><td class="num"><b>+0.019</b></td><td class="num">0.956 / 0.834</td></tr>
+</table>
 <p class="small">출처: <span class="mono">disc_gen_eval.py</span>; JSON <span class="mono">sets_res/disc_gen_eval_f{005,01}{,_data}_v4.json</span>; 수정 전 대조 <span class="mono">disc_gen_eval_f005.json</span> (v2 라운드); pool 통계 <span class="mono">uncond_pool_eval{,_v4}.json</span>.</p>
 </body>
 </html>

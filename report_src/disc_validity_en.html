@@ -24,80 +24,114 @@
 </head>
 <body>
 <h1>Discriminator Validity &amp; Generalization — v4</h1>
-<p class="small">2026-07-27 · Companion to <span class="mono">RESULTS_BD_V4.pdf</span>. Question under test: <b>does the unseen (e99) discriminator genuinely generalize to a new scenario, or does the downstream seen≈unseen equality hide something?</b> All discs here are the v4 round (<span class="mono">_v4</span>), trained on the EOS-fixed backbones' pools; the pre-fix (v2) numbers appear only in the confound case study (§4).</p>
+<p class="small">2026-07-27 · Companion to <span class="mono">RESULTS_BD_V4.pdf</span>. Question under test: <b>does the unseen (e99) discriminator genuinely generalize to a new scenario, or does the downstream seen≈unseen equality hide something?</b> All discs here are the v4 round (<span class="mono">_v4</span>), trained on the EOS-fixed backbones' pools; the pre-fix (v2) numbers appear only in the confound case study (§4). <b>The body reports classification accuracy</b>; AUC for the same runs is in Appendix A.</p>
 
 <h2>1. What the discriminator is, and split hygiene</h2>
 <ul class="small">
 <li><b>Role</b>: guidance needs the block-conditional ratio w = q<sub>except</sub>(x₀|x<sup>&lt;b</sup>)/p<sub>θ</sub>(x₀|x<sup>&lt;b</sup>); the disc D estimates it as D/(1−D) on clean partial paths [prefix ∥ block], adjacency-conditioned (GraphSAGE embedding of A<sub>scn</sub> + per-position edge-existence features), bounded logit ℓ = 4·tanh(z/4).</li>
-<li><b>Seen (e0)</b>: positives = except_0 paths, 1% of the pool <i>after excluding</i> the 1,000 eval-reserved rows (<span class="mono">RandomState(777)</span> permutation, first 1,000 reserved). <b>Unseen (e99)</b>: positives = except 1–99 only (per-scenario 1%), except_0 never contributes a gradient; the except_0 validation accuracy printed during training is a monitoring diagnostic only (fixed 4,000 steps, no model selection).</li>
+<li><b>Seen (e0)</b>: positives = except_0 paths, 1% of the pool <i>after excluding</i> the 1,000 eval-reserved rows = 19,308 paths (<span class="mono">RandomState(777)</span> permutation). <b>Unseen (e99)</b>: positives = except 1–99 only (1% per scenario × 99 = 1,911,492 paths); except_0 never contributes a gradient. The except_0 validation accuracy printed during training is a monitoring diagnostic only (fixed 4,000 steps, no model selection).</li>
 <li><b>Every evaluation below uses held-out data for both discs</b>: except_0 probes use the reserved rows; except_1 probes use rows outside e99's 1% slice; negatives are fresh (seed-99 pools disjoint from the seed-1 training pools; fresh normal sample for the data-negative probe).</li>
 </ul>
 
-<h2>2. Symmetric probe design</h2>
-<p class="small">Two probe scenarios flip the roles: on <b>except_0</b> the e0 disc is in-scenario and e99 is zero-shot; on <b>except_1</b> e99 is in-scenario (held-out rows) and e0 is zero-shot. If generalization is real, the in-scenario advantage should be small and should flip with the probe — which is exactly what happens. Metrics: AUC, accuracy@0, and Pearson correlation between the two discs' logits on identical inputs.</p>
+<h2>2. Symmetric probe design and metrics</h2>
+<p class="small">Two probe scenarios flip the roles: on <b>except_0</b> the e0 disc is in-scenario and e99 is zero-shot; on <b>except_1</b> e99 is in-scenario (held-out rows) and e0 is zero-shot. If generalization is real, the in-scenario advantage should be small and should flip with the probe.</p>
+<ul class="small">
+<li><b>Accuracy</b> = hit rate on a balanced set of 1,000 positives + 1,000 negatives, thresholding at logit &gt; 0 (i.e. D &gt; 0.5, the natural BCE threshold — never tuned). <b>Chance = 0.500.</b></li>
+<li><b>Zero-shot drop</b> = (accuracy on the probe that is <i>not</i> the disc's training scenario) − (accuracy on its own scenario): exc1 − exc0 for e0, exc0 − exc1 for e99. More negative = more damage from moving scenario.</li>
+<li><b>Logit Pearson</b> = correlation of the two discs' logits over the identical 2,000 inputs — direct evidence of learning the same function.</li>
+</ul>
 
 <h2>3. Model-negative discs (per block): positives = real except paths, negatives = fresh unconditional generations</h2>
 <h3>3.1 fam 0.05</h3>
 <table>
-<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">AUC on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">logit Pearson</th></tr>
-<tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">exc0</th><th class="num">exc1</th></tr>
-<tr><td>1</td><td class="num">0.870</td><td class="num">0.833</td><td class="num">0.787</td><td class="num">0.848</td><td class="num">0.904</td><td class="num">0.810</td></tr>
-<tr><td>2</td><td class="num">0.890</td><td class="num">0.872</td><td class="num">0.843</td><td class="num">0.887</td><td class="num">0.913</td><td class="num">0.837</td></tr>
-<tr><td>4</td><td class="num">0.897</td><td class="num">0.888</td><td class="num">0.850</td><td class="num">0.901</td><td class="num">0.925</td><td class="num">0.825</td></tr>
-<tr><td>8</td><td class="num">0.943</td><td class="num">0.931</td><td class="num">0.898</td><td class="num">0.932</td><td class="num">0.956</td><td class="num">0.866</td></tr>
-<tr><td>16</td><td class="num">0.951</td><td class="num">0.948</td><td class="num">0.930</td><td class="num">0.948</td><td class="num">0.970</td><td class="num">0.947</td></tr>
-<tr><td>32</td><td class="num">0.956</td><td class="num">0.951</td><td class="num">0.945</td><td class="num">0.952</td><td class="num">0.963</td><td class="num">0.950</td></tr>
-<tr><td>64</td><td class="num">0.957</td><td class="num">0.958</td><td class="num">0.946</td><td class="num">0.957</td><td class="num">0.976</td><td class="num">0.968</td></tr>
+<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">accuracy on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">accuracy on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot drop</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>1</td><td class="num">0.760</td><td class="num">0.741</td><td class="num">0.677</td><td class="num">0.750</td><td class="num"><b>−0.083</b></td><td class="num"><b>−0.010</b></td><td class="num">0.904 / 0.810</td></tr>
+<tr><td>2</td><td class="num">0.772</td><td class="num">0.775</td><td class="num">0.724</td><td class="num">0.795</td><td class="num"><b>−0.048</b></td><td class="num"><b>−0.020</b></td><td class="num">0.913 / 0.837</td></tr>
+<tr><td>4</td><td class="num">0.802</td><td class="num">0.809</td><td class="num">0.752</td><td class="num">0.811</td><td class="num"><b>−0.050</b></td><td class="num"><b>−0.002</b></td><td class="num">0.925 / 0.825</td></tr>
+<tr><td>8</td><td class="num">0.857</td><td class="num">0.858</td><td class="num">0.794</td><td class="num">0.848</td><td class="num"><b>−0.063</b></td><td class="num"><b>+0.010</b></td><td class="num">0.956 / 0.866</td></tr>
+<tr><td>16</td><td class="num">0.875</td><td class="num">0.875</td><td class="num">0.859</td><td class="num">0.873</td><td class="num"><b>−0.016</b></td><td class="num"><b>+0.002</b></td><td class="num">0.970 / 0.947</td></tr>
+<tr><td>32</td><td class="num">0.879</td><td class="num">0.880</td><td class="num">0.858</td><td class="num">0.872</td><td class="num"><b>−0.022</b></td><td class="num"><b>+0.008</b></td><td class="num">0.963 / 0.950</td></tr>
+<tr><td>64</td><td class="num">0.889</td><td class="num">0.900</td><td class="num">0.871</td><td class="num">0.890</td><td class="num"><b>−0.018</b></td><td class="num"><b>+0.010</b></td><td class="num">0.976 / 0.968</td></tr>
 </table>
 <h3>3.2 fam 0.1</h3>
 <table>
-<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">AUC on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">logit Pearson</th></tr>
-<tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">exc0</th><th class="num">exc1</th></tr>
-<tr><td>1</td><td class="num">0.947</td><td class="num">0.935</td><td class="num">0.902</td><td class="num">0.926</td><td class="num">0.950</td><td class="num">0.877</td></tr>
-<tr><td>2</td><td class="num">0.959</td><td class="num">0.953</td><td class="num">0.914</td><td class="num">0.940</td><td class="num">0.963</td><td class="num">0.920</td></tr>
-<tr><td>4</td><td class="num">0.962</td><td class="num">0.948</td><td class="num">0.929</td><td class="num">0.946</td><td class="num">0.970</td><td class="num">0.933</td></tr>
-<tr><td>8</td><td class="num">0.977</td><td class="num">0.971</td><td class="num">0.946</td><td class="num">0.965</td><td class="num">0.975</td><td class="num">0.929</td></tr>
-<tr><td>16</td><td class="num">0.981</td><td class="num">0.978</td><td class="num">0.962</td><td class="num">0.972</td><td class="num">0.980</td><td class="num">0.959</td></tr>
-<tr><td>32</td><td class="num">0.977</td><td class="num">0.973</td><td class="num">0.964</td><td class="num">0.971</td><td class="num">0.981</td><td class="num">0.965</td></tr>
-<tr><td>64</td><td class="num">0.983</td><td class="num">0.977</td><td class="num">0.967</td><td class="num">0.974</td><td class="num">0.980</td><td class="num">0.973</td></tr>
+<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">accuracy on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">accuracy on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot drop</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>1</td><td class="num">0.846</td><td class="num">0.838</td><td class="num">0.795</td><td class="num">0.838</td><td class="num"><b>−0.050</b></td><td class="num"><b>0.000</b></td><td class="num">0.950 / 0.877</td></tr>
+<tr><td>2</td><td class="num">0.869</td><td class="num">0.854</td><td class="num">0.819</td><td class="num">0.844</td><td class="num"><b>−0.050</b></td><td class="num"><b>+0.010</b></td><td class="num">0.963 / 0.920</td></tr>
+<tr><td>4</td><td class="num">0.882</td><td class="num">0.863</td><td class="num">0.833</td><td class="num">0.863</td><td class="num"><b>−0.049</b></td><td class="num"><b>0.000</b></td><td class="num">0.970 / 0.933</td></tr>
+<tr><td>8</td><td class="num">0.911</td><td class="num">0.902</td><td class="num">0.855</td><td class="num">0.887</td><td class="num"><b>−0.056</b></td><td class="num"><b>+0.015</b></td><td class="num">0.975 / 0.929</td></tr>
+<tr><td>16</td><td class="num">0.918</td><td class="num">0.908</td><td class="num">0.885</td><td class="num">0.904</td><td class="num"><b>−0.033</b></td><td class="num"><b>+0.004</b></td><td class="num">0.980 / 0.959</td></tr>
+<tr><td>32</td><td class="num">0.912</td><td class="num">0.908</td><td class="num">0.899</td><td class="num">0.903</td><td class="num"><b>−0.013</b></td><td class="num"><b>+0.005</b></td><td class="num">0.981 / 0.965</td></tr>
+<tr><td>64</td><td class="num">0.934</td><td class="num">0.926</td><td class="num">0.905</td><td class="num">0.916</td><td class="num"><b>−0.029</b></td><td class="num"><b>+0.010</b></td><td class="num">0.980 / 0.973</td></tr>
 </table>
 <ul class="small">
-<li><b>The in-scenario advantage flips with the probe direction and stays small</b> (0.005–0.06 AUC): whichever disc is zero-shot loses a little, in both directions, at both families. This is the signature of genuine transfer, not memorization.</li>
-<li><b>Transfer is cheap here by construction</b>: on this task most of the signal — edge legality against the <i>input</i> adjacency, plus model-generation artifacts — is scenario-agnostic. The disc reads A<sub>scn</sub> as an input, so "an edge absent from the given adjacency ⇒ fake" transfers to any scenario.</li>
-<li><b>AUC level across blocks tracks the backbone, not the disc</b>: it rises with the negative pool's invalid-edge rate (v4: blk1 2.3% → blk64 11.4%). Cross-block AUC comparison is a statement about p<sub>θ</sub> quality (harder vs easier negatives), not about disc quality — see §4.</li>
-<li>fam 0.1 AUCs are uniformly higher: twice the removed edges give a stronger scenario signal.</li>
+<li><b>e99 loses essentially nothing when the scenario changes</b>: zero-shot drop −0.020…+0.010 at fam 0.05 and 0.000…+0.015 at fam 0.1, whereas the <b>single-scenario e0 consistently pays</b> (−0.016…−0.083 and −0.013…−0.056). The in-scenario advantage exists only for e0, and even there it is small (e0 − e99 on exc0 = −0.011…+0.019).</li>
+<li><b>Transfer is cheap here by construction</b>: most of the signal — edge legality against the <i>input</i> adjacency, plus model-generation artifacts — is scenario-agnostic. The disc reads A<sub>scn</sub> as an input, so "an edge absent from the given adjacency ⇒ fake" transfers to any scenario.</li>
+<li><b>Accuracy level across blocks tracks the backbone, not the disc</b>: it rises with the negative pool's invalid-edge rate (v4: blk1 2.3% → blk64 11.4%). Cross-block comparison is a statement about p<sub>θ</sub> quality (harder vs easier negatives) — see §4.</li>
+<li>fam 0.1 is uniformly higher: twice the removed edges give a stronger scenario signal.</li>
 </ul>
 
 <h2>4. The negative-pool confound — v2 blk1 case study</h2>
-<p class="small">Under the pre-fix (v2) backbones, the blk1 disc posted the <i>best</i> AUC (0.985) while blk2 posted the worst (0.881) — an apparent non-monotonicity. The cause was the negative pool, not the disc: v2 blk1's unconditional generations were degenerate (every path ran to the canvas cap, length 101 vs real 23.2; 50.5% invalid edges), so its negatives were separable by a <b>length shortcut</b> alone. After the EOS fix the blk1 pool is healthy (length 25.2; 2.3% invalid) and the blk1 AUC falls to an honest 0.870 — now the AUC sequence is monotone in the pools' invalid-edge rates at every block. Lesson: with model-negative training, <b>per-block AUCs conflate disc quality with generation quality</b>; only the within-block seen-vs-unseen comparison (same pool for both discs) is confound-free.</p>
+<p class="small">Under the pre-fix (v2) backbones, the blk1 disc posted the <i>best</i> accuracy (0.943) while blk2 posted the worst (0.766) — an apparent non-monotonicity. The cause was the negative pool, not the disc: v2 blk1's unconditional generations were degenerate (every path ran to the canvas cap, length 101 vs real 23.2; 50.5% invalid edges), so its negatives were separable by a <b>length shortcut</b> alone. After the EOS fix the blk1 pool is healthy (length 25.2; 2.3% invalid) and blk1 accuracy falls to an honest 0.760 — the ordering is now monotone in the pools' invalid-edge rates at every block. Lesson: with model-negative training, <b>per-block scores conflate disc quality with generation quality</b>; only the within-block seen-vs-unseen comparison (same pool for both discs) is confound-free.</p>
 <table>
-<tr><th></th><th class="num">pool len (real 23.2)</th><th class="num">pool invE</th><th class="num">cap%</th><th class="num">AUC e0, exc0</th></tr>
-<tr><td>v2 blk1 (pre-fix)</td><td class="num">101.0±0.0</td><td class="num">50.5%</td><td class="num">100%</td><td class="num">0.985 <span class="muted">(length shortcut)</span></td></tr>
-<tr><td>v4 blk1 (post-fix)</td><td class="num">25.2±12.5</td><td class="num">2.3%</td><td class="num">0.9%</td><td class="num">0.870 <span class="muted">(honest)</span></td></tr>
+<tr><th></th><th class="num">pool len (real 23.2)</th><th class="num">pool invE</th><th class="num">cap%</th><th class="num">accuracy e0, exc0</th></tr>
+<tr><td>v2 blk1 (pre-fix)</td><td class="num">101.0±0.0</td><td class="num">50.5%</td><td class="num">100%</td><td class="num">0.943 <span class="muted">(length shortcut)</span></td></tr>
+<tr><td>v4 blk1 (post-fix)</td><td class="num">25.2±12.5</td><td class="num">2.3%</td><td class="num">0.9%</td><td class="num">0.760 <span class="muted">(honest)</span></td></tr>
 </table>
 
 <h2>5. Data-negative discs (block-independent): the strict generalization probe</h2>
 <p class="small">Positives = real except paths, negatives = <b>real normal paths</b> — real-vs-real, so every scenario-agnostic shortcut (model artifacts, length) is removed and <b>only scenario-specific information</b> (which edges were removed, how routes divert) separates the classes. One disc per regime, no per-block pools, hence no §4 confound. These discs involve no backbone at all, so they are identical across v2/v4 (same seed).</p>
 <table>
-<tr><th rowspan="2">family</th><th colspan="2" style="text-align:center">AUC on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot drop</th><th class="num" rowspan="2">Pearson exc0 / exc1</th></tr>
-<tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
-<tr><td>0.05</td><td class="num">0.845</td><td class="num">0.813</td><td class="num">0.745</td><td class="num">0.835</td><td class="num"><b>−0.100</b></td><td class="num"><b>−0.022</b></td><td class="num">0.913 / 0.737</td></tr>
-<tr><td>0.1</td><td class="num">0.951</td><td class="num">0.932</td><td class="num">0.867</td><td class="num">0.914</td><td class="num"><b>−0.084</b></td><td class="num"><b>+0.018</b></td><td class="num">0.956 / 0.834</td></tr>
+<tr><th rowspan="2">family</th><th colspan="2" style="text-align:center">accuracy on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">accuracy on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot drop</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>0.05</td><td class="num">0.726</td><td class="num">0.712</td><td class="num">0.641</td><td class="num">0.735</td><td class="num"><b>−0.085</b></td><td class="num"><b>−0.023</b></td><td class="num">0.913 / 0.737</td></tr>
+<tr><td>0.1</td><td class="num">0.850</td><td class="num">0.837</td><td class="num">0.751</td><td class="num">0.810</td><td class="num"><b>−0.099</b></td><td class="num"><b>+0.026</b></td><td class="num">0.956 / 0.834</td></tr>
 </table>
 <ul class="small">
-<li><b>This probe separates the training regimes</b>: the single-scenario e0 disc degrades substantially zero-shot (−0.100 / −0.084), while the 99-scenario e99 disc is nearly flat (−0.022 / +0.018). Genuine scenario-specific generalization is a property of <i>multi-scenario training</i> — one scenario does not teach the adjacency-conditioning rule well enough.</li>
+<li><b>This probe separates the training regimes</b>: the single-scenario e0 disc drops −0.085 / −0.099 zero-shot, while the 99-scenario e99 disc is flat (−0.023 / +0.026). Genuine scenario-specific generalization is a property of <i>multi-scenario training</i> — one scenario does not teach the adjacency-conditioning rule well enough.</li>
+<li>Absolute levels are lower because the task is genuinely hard (fam 0.05, e0 zero-shot 0.641 against a chance of 0.500): telling which scenario produced a <i>real</i> shortest path is a subtle question.</li>
 <li>The logit correlation also drops on the zero-shot side (exc1: 0.737 / 0.834) — where the task is scenario-specific, the two discs really are different functions.</li>
 </ul>
 
 <h2>6. Why downstream seen ≈ unseen even so</h2>
 <ul class="small">
-<li><b>Guidance uses the model-negative disc</b>, whose signal transfers almost freely (§3) — the hard probe of §5 concerns a disc variant the pipeline does not deploy (it is the §4.1b ablation in the v3 report).</li>
-<li><b>Self-normalized IS cancels calibration</b>: weights w<sub>n</sub> = exp(γℓ<sub>n</sub>) enter only as w<sub>n</sub>/Σw<sub>m</sub>, so any constant logit offset — the main casualty of zero-shot transfer (accuracy@0 drops much more than AUC) — multiplies out exactly. Only the ranking/relative differences matter, and those transfer (AUC gap ≤0.05).</li>
+<li><b>Guidance uses the model-negative disc</b>, whose signal transfers almost freely (§3) — the hard probe of §5 concerns a disc variant the pipeline does not deploy (the §4.1b ablation in the v3 report).</li>
+<li><b>Self-normalized IS cancels calibration</b>: weights w<sub>n</sub> = exp(γℓ<sub>n</sub>) enter only as w<sub>n</sub>/Σw<sub>m</sub>, so any constant logit offset multiplies out exactly. What remains is ranking damage, and that is small for the deployed disc (e99 zero-shot accuracy drop ≤0.020, AUC drop ≤0.015 — Appendix A).</li>
 <li><b>At guidance time the scored inputs are model candidates</b>, i.e. exactly the distribution the model-negative disc was trained against; the deployed disc is matched to its use.</li>
 </ul>
 
 <h2>7. Conclusion</h2>
-<p>The seen/unseen equivalence observed downstream (v∧a gap ≤0.015 at fam 0.05, ≤0.003 at fam 0.1 across all blocks) is fully accounted for: (1) the deployed model-negative discriminators transfer because their discrimination signal is scenario-agnostic by construction and adjacency is an input; (2) SNIS guidance is invariant to the calibration shift that zero-shot transfer does cause; and (3) independently, the strict real-vs-real probe shows the e99 training recipe does acquire transferable scenario-specific knowledge that single-scenario training does not. The one caveat for reading disc metrics — per-block AUCs reflect negative-pool difficulty — is demonstrated and resolved by the v2→v4 blk1 case study.</p>
+<p>The seen/unseen equivalence observed downstream (v∧a gap ≤0.015 at fam 0.05, ≤0.003 at fam 0.1 across all blocks) is fully accounted for: (1) the deployed model-negative discriminators transfer because their discrimination signal is scenario-agnostic by construction and adjacency is an input (e99 zero-shot accuracy drop ≤0.020); (2) SNIS guidance is invariant to the calibration shift zero-shot transfer causes; and (3) independently, the strict real-vs-real probe shows the e99 recipe acquires transferable scenario-specific knowledge that single-scenario training does not (−0.023 vs −0.085). The one caveat for reading disc metrics — per-block scores reflect negative-pool difficulty — is demonstrated and resolved by the v2→v4 blk1 case study.</p>
+
+<h2>Appendix A. AUC for the same runs</h2>
+<p class="small">Accuracy is pinned to the threshold 0 (D = 0.5) and is therefore sensitive to a constant logit offset. SNIS guidance is invariant to that offset (§6), so the ranking metric AUC is the theoretically aligned one and accuracy is the readable summary. Both give the same conclusions.</p>
+<h3>A.1 Model-negative, fam 0.05</h3>
+<table>
+<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">AUC on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot drop</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>1</td><td class="num">0.870</td><td class="num">0.833</td><td class="num">0.787</td><td class="num">0.848</td><td class="num"><b>−0.083</b></td><td class="num"><b>−0.015</b></td><td class="num">0.904 / 0.810</td></tr>
+<tr><td>2</td><td class="num">0.890</td><td class="num">0.872</td><td class="num">0.843</td><td class="num">0.887</td><td class="num"><b>−0.046</b></td><td class="num"><b>−0.015</b></td><td class="num">0.913 / 0.837</td></tr>
+<tr><td>4</td><td class="num">0.897</td><td class="num">0.888</td><td class="num">0.850</td><td class="num">0.901</td><td class="num"><b>−0.047</b></td><td class="num"><b>−0.013</b></td><td class="num">0.925 / 0.825</td></tr>
+<tr><td>8</td><td class="num">0.943</td><td class="num">0.931</td><td class="num">0.898</td><td class="num">0.932</td><td class="num"><b>−0.045</b></td><td class="num"><b>−0.002</b></td><td class="num">0.956 / 0.866</td></tr>
+<tr><td>16</td><td class="num">0.951</td><td class="num">0.948</td><td class="num">0.930</td><td class="num">0.948</td><td class="num"><b>−0.021</b></td><td class="num"><b>0.000</b></td><td class="num">0.970 / 0.947</td></tr>
+<tr><td>32</td><td class="num">0.956</td><td class="num">0.951</td><td class="num">0.945</td><td class="num">0.952</td><td class="num"><b>−0.011</b></td><td class="num"><b>−0.001</b></td><td class="num">0.963 / 0.950</td></tr>
+<tr><td>64</td><td class="num">0.957</td><td class="num">0.958</td><td class="num">0.946</td><td class="num">0.957</td><td class="num"><b>−0.012</b></td><td class="num"><b>+0.001</b></td><td class="num">0.976 / 0.968</td></tr>
+</table>
+<h3>A.2 Model-negative, fam 0.1</h3>
+<table>
+<tr><th rowspan="2">blk</th><th colspan="2" style="text-align:center">AUC on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot drop</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>1</td><td class="num">0.947</td><td class="num">0.935</td><td class="num">0.902</td><td class="num">0.926</td><td class="num"><b>−0.045</b></td><td class="num"><b>+0.010</b></td><td class="num">0.950 / 0.877</td></tr>
+<tr><td>2</td><td class="num">0.959</td><td class="num">0.953</td><td class="num">0.914</td><td class="num">0.940</td><td class="num"><b>−0.045</b></td><td class="num"><b>+0.013</b></td><td class="num">0.963 / 0.920</td></tr>
+<tr><td>4</td><td class="num">0.962</td><td class="num">0.948</td><td class="num">0.929</td><td class="num">0.946</td><td class="num"><b>−0.032</b></td><td class="num"><b>+0.001</b></td><td class="num">0.970 / 0.933</td></tr>
+<tr><td>8</td><td class="num">0.977</td><td class="num">0.971</td><td class="num">0.946</td><td class="num">0.965</td><td class="num"><b>−0.031</b></td><td class="num"><b>+0.006</b></td><td class="num">0.975 / 0.929</td></tr>
+<tr><td>16</td><td class="num">0.981</td><td class="num">0.978</td><td class="num">0.962</td><td class="num">0.972</td><td class="num"><b>−0.019</b></td><td class="num"><b>+0.006</b></td><td class="num">0.980 / 0.959</td></tr>
+<tr><td>32</td><td class="num">0.977</td><td class="num">0.973</td><td class="num">0.964</td><td class="num">0.971</td><td class="num"><b>−0.013</b></td><td class="num"><b>+0.002</b></td><td class="num">0.981 / 0.965</td></tr>
+<tr><td>64</td><td class="num">0.983</td><td class="num">0.977</td><td class="num">0.967</td><td class="num">0.974</td><td class="num"><b>−0.017</b></td><td class="num"><b>+0.004</b></td><td class="num">0.980 / 0.973</td></tr>
+</table>
+<h3>A.3 Data-negative</h3>
+<table>
+<tr><th rowspan="2">family</th><th colspan="2" style="text-align:center">AUC on except_0 (e0 in-scn)</th><th colspan="2" style="text-align:center">AUC on except_1 (e99 in-scn)</th><th colspan="2" style="text-align:center">zero-shot drop</th><th class="num" rowspan="2">logit Pearson<br>exc0 / exc1</th></tr><tr><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th><th class="num">e0</th><th class="num">e99</th></tr>
+<tr><td>0.05</td><td class="num">0.845</td><td class="num">0.813</td><td class="num">0.745</td><td class="num">0.835</td><td class="num"><b>−0.100</b></td><td class="num"><b>−0.021</b></td><td class="num">0.913 / 0.737</td></tr>
+<tr><td>0.1</td><td class="num">0.951</td><td class="num">0.932</td><td class="num">0.867</td><td class="num">0.914</td><td class="num"><b>−0.084</b></td><td class="num"><b>+0.019</b></td><td class="num">0.956 / 0.834</td></tr>
+</table>
 <p class="small">Sources: <span class="mono">disc_gen_eval.py</span>; JSONs <span class="mono">sets_res/disc_gen_eval_f{005,01}{,_data}_v4.json</span>; pre-fix contrast <span class="mono">disc_gen_eval_f005.json</span> (v2 round); pool stats <span class="mono">uncond_pool_eval{,_v4}.json</span>.</p>
 </body>
 </html>
