@@ -83,7 +83,7 @@ if __name__ == "__main__":
     ap.add_argument("-seed", type=int, default=123, help="truncation rng seed")
     ap.add_argument("-porto", type=str, default="./porto_data")
     ap.add_argument("-disc_dir", type=str, default="./sets_disc")
-    ap.add_argument("-pool_pat", type=str, default="./sets_disc/geneval_pool_blk{B}.pth")
+    ap.add_argument("-pool_pat", type=str, default="./sets_disc/geneval_pool_v4_blk{B}.pth")
     ap.add_argument("-sfx", type=str, default="", help="disc filename suffix (e.g. _v4)")
     ap.add_argument("-res_path", type=str, default="./sets_res")
     args = ap.parse_args()

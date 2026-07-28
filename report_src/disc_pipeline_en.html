@@ -1,0 +1,140 @@
+<title>Discriminator pipeline for importance-weight guidance in block diffusion</title>
+<style>
+ @page { size: 318mm 209mm; margin: 0 }
+ html,body { margin:0; padding:0; background:#fff }
+ svg { display:block }
+ text { font-family:"Helvetica Neue",Helvetica,Arial,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+        fill:#1f2933; -webkit-font-smoothing:antialiased }
+ .ti { font-size:19px; font-weight:700; letter-spacing:-0.2px }
+ .src{ font-size:10px; fill:#9aa5b1; font-family:ui-monospace,SFMono-Regular,Menlo,monospace }
+ .pt { font-size:14.5px; font-weight:700; fill:#3e4c59 }
+ .bt { font-size:12.5px; font-weight:700 }
+ .bl { font-size:11px; fill:#3e4c59 }
+ .mn { font-size:10.5px; fill:#3e4c59; font-family:ui-monospace,SFMono-Regular,Menlo,monospace }
+ .ed { font-size:10px; fill:#7b8794 }
+ .eda{ font-size:10px; fill:#b45309; font-weight:600 }
+ .cap{ font-size:10.5px; fill:#7b8794 }
+</style>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 790" width="1200" height="790">
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="#616e7c"/></marker>
+  <marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="#b45309"/></marker>
+</defs>
+<rect width="1200" height="790" fill="#ffffff"/>
+<text x="24" y="30" class="ti">Discriminator pipeline for importance-weight guidance in block diffusion</text>
+<rect x="24" y="56" width="250" height="654" rx="9" fill="none" stroke="#9aa5b1" stroke-width="1" stroke-dasharray="5 4"/><text x="38" y="45" class="pt">①  Example construction</text>
+<rect x="306" y="56" width="520" height="654" rx="9" fill="none" stroke="#9aa5b1" stroke-width="1" stroke-dasharray="5 4"/><text x="320" y="45" class="pt">②  BDDiscriminator  D(x | A_scn)</text>
+<rect x="858" y="56" width="318" height="654" rx="9" fill="none" stroke="#9aa5b1" stroke-width="1" stroke-dasharray="5 4"/><text x="872" y="45" class="pt">③  Objective and the two uses</text>
+<rect x="40" y="76" width="218" height="62" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="149.0" y="97" text-anchor="middle" class="bt" fill="#1f2933">Positives — exceptional</text>
+<text x="149.0" y="116.0" text-anchor="middle" class="bl">except_e shortest paths, 1% slice</text>
+<text x="149.0" y="131.5" text-anchor="middle" class="bl">(first 1,000 rows held out for eval)</text>
+<rect x="40" y="158" width="218" height="62" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="149.0" y="179" text-anchor="middle" class="bt" fill="#1f2933">Negatives — reference p_ref</text>
+<text x="149.0" y="198.0" text-anchor="middle" class="bl">model: unconditional BD samples</text>
+<text x="149.0" y="213.5" text-anchor="middle" class="bl">or data: real normal paths</text>
+<line x1="109.0" y1="138" x2="109.0" y2="243" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<line x1="189.0" y1="220" x2="189.0" y2="243" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="40" y="250" width="218" height="58" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="149.0" y="271" text-anchor="middle" class="bt" fill="#1f2933">make_partial</text>
+<text x="149.0" y="290.0" text-anchor="middle" class="bl">random prefix in canvas form</text>
+<text x="149.0" y="305.5" text-anchor="middle" class="mn">[dst, v0, …, v_j],  j ~ U{2,…,L}</text>
+<line x1="149.0" y1="308" x2="149.0" y2="321" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="40" y="328" width="218" height="58" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="149.0" y="349" text-anchor="middle" class="bt" fill="#1f2933">pad_batch</text>
+<text x="149.0" y="368.0" text-anchor="middle" class="bl">dedicated PAD = V, max_len 128</text>
+<text x="149.0" y="383.5" text-anchor="middle" class="mn">→ (tokens, lengths)</text>
+<line x1="149.0" y1="386" x2="149.0" y2="399" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="40" y="406" width="218" height="58" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="149.0" y="427" text-anchor="middle" class="bt" fill="#1f2933">batch</text>
+<text x="149.0" y="446.0" text-anchor="middle" class="bl">64 positives + 64 negatives</text>
+<text x="149.0" y="461.5" text-anchor="middle" class="bl">labels 1−ε / ε,  ε = 0.05</text>
+<rect x="40" y="500" width="218" height="74" rx="6" fill="#fff8ec" stroke="#b45309" stroke-width="1.6"/>
+<text x="149.0" y="521" text-anchor="middle" class="bt" fill="#b45309">scenario e drawn per step</text>
+<text x="149.0" y="540.0" text-anchor="middle" class="bl">A_scn  (V × V) adjacency</text>
+<text x="149.0" y="555.5" text-anchor="middle" class="bl">deg_ratio = deg_scn / deg_norm</text>
+<text x="149.0" y="592" text-anchor="middle" class="cap">one scenario per step: e0 = {0}, e99 = {1,…,99}</text>
+<rect x="40" y="616" width="218" height="74" rx="6" fill="#f7f9fa" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="149.0" y="637" text-anchor="middle" class="bt" fill="#1f2933">Pool sizes (Porto, V = 1,390)</text>
+<text x="149.0" y="656.0" text-anchor="middle" class="bl">e0: 19,308 positives (1% of 1.93 M)</text>
+<text x="149.0" y="671.5" text-anchor="middle" class="bl">e99: 1,911,492 positives</text>
+<text x="149.0" y="687.0" text-anchor="middle" class="bl">model negatives: 20,000 per block</text>
+<rect x="326" y="86" width="480" height="52" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="566.0" y="107" text-anchor="middle" class="bt" fill="#1f2933">Vertex embedding table</text>
+<text x="566.0" y="126.0" text-anchor="middle" class="bl">(V+1) × 100, node2vec init</text>
+<text x="566.0" y="141.5" text-anchor="middle" class="bl">dedicated PAD row (padding_idx)</text>
+<rect x="326" y="158" width="480" height="76" rx="6" fill="#fff8ec" stroke="#b45309" stroke-width="1.6"/>
+<text x="566.0" y="179" text-anchor="middle" class="bt" fill="#b45309">GraphSAGE × 2  over A_scn</text>
+<text x="566.0" y="198.0" text-anchor="middle" class="bl">h ← ReLU( W [ h ‖ Â h ] ),  Â = row-norm(A+I)</text>
+<text x="566.0" y="213.5" text-anchor="middle" class="mn">E_scn = E + h   (residual; PAD row untouched)</text>
+<text x="566.0" y="229.0" text-anchor="middle" class="mn">⇒ scenario-conditioned vertex embeddings</text>
+<line x1="566.0" y1="138" x2="566.0" y2="151" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="326" y="254" width="480" height="52" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="566.0" y="275" text-anchor="middle" class="bt" fill="#1f2933">Gather + project</text>
+<text x="566.0" y="294.0" text-anchor="middle" class="bl">E_scn[tokens] → Linear 100 → 128</text>
+<text x="566.0" y="309.5" text-anchor="middle" class="bl">+ learned positional embedding</text>
+<line x1="566.0" y1="234" x2="566.0" y2="247" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="326" y="326" width="480" height="88" rx="6" fill="#fff8ec" stroke="#b45309" stroke-width="1.6"/>
+<text x="566.0" y="347" text-anchor="middle" class="bt" fill="#b45309">Transition-feature channel  → Linear 3 → 128</text>
+<text x="566.0" y="366.0" text-anchor="middle" class="bl">per position i:</text>
+<text x="566.0" y="381.5" text-anchor="middle" class="mn">edge_exists = A_scn[ v_{i−1}, v_i ]   ∈ {0,1}</text>
+<text x="566.0" y="397.0" text-anchor="middle" class="mn">is_transition = 1[ i ≥ 2 and not PAD ]</text>
+<text x="566.0" y="412.5" text-anchor="middle" class="mn">deg_ratio[ v_i ]                (added to x)</text>
+<line x1="566.0" y1="306" x2="566.0" y2="319" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="326" y="434" width="480" height="58" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="566.0" y="455" text-anchor="middle" class="bt" fill="#1f2933">Transformer encoder × 2</text>
+<text x="566.0" y="474.0" text-anchor="middle" class="bl">pre-LN, 4 heads, dim 128</text>
+<text x="566.0" y="489.5" text-anchor="middle" class="bl">attention masked on PAD keys</text>
+<line x1="566.0" y1="414" x2="566.0" y2="427" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="326" y="512" width="480" height="50" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="566.0" y="533" text-anchor="middle" class="bt" fill="#1f2933">LayerNorm + masked mean pooling</text>
+<text x="566.0" y="552.0" text-anchor="middle" class="bl">PAD positions excluded → batch-invariant</text>
+<line x1="566.0" y1="492" x2="566.0" y2="505" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="326" y="582" width="480" height="46" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="566.0" y="603" text-anchor="middle" class="bt" fill="#1f2933">MLP head  128 → 128 → 1   ⇒  z</text>
+<line x1="566.0" y1="562" x2="566.0" y2="575" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<rect x="326" y="648" width="480" height="46" rx="6" fill="#fff8ec" stroke="#b45309" stroke-width="1.6"/>
+<text x="566.0" y="669" text-anchor="middle" class="bt" fill="#b45309">Bounded logit   ℓ = λ · tanh( z / λ ),   λ = 4</text>
+<text x="566.0" y="688.0" text-anchor="middle" class="bl">|ℓ| ≤ 4  ⇒  weight capped at e⁴</text>
+<line x1="566.0" y1="628" x2="566.0" y2="641" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<path d="M 258 435 H 292 V 112 H 322" fill="none" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<path d="M 258 537 H 300 V 196 H 322" fill="none" stroke="#b45309" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ara)"/>
+<path d="M 300 370 H 322" fill="none" stroke="#b45309" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ara)"/>
+<rect x="874" y="86" width="286" height="92" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="1017.0" y="107" text-anchor="middle" class="bt" fill="#1f2933">Training</text>
+<text x="1017.0" y="126.0" text-anchor="middle" class="bl">BCE-with-logits on smoothed labels</text>
+<text x="1017.0" y="141.5" text-anchor="middle" class="mn">Adam · grad-clip 1.0 · 4,000 steps · bs 128</text>
+<text x="1017.0" y="157.0" text-anchor="middle" class="mn">50/50 positives / negatives per step</text>
+<rect x="874" y="250" width="286" height="182" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="1017.0" y="271" text-anchor="middle" class="bt" fill="#1f2933">Use 1 — SNIS guidance at sampling time</text>
+<text x="1017.0" y="290.0" text-anchor="middle" class="bl">at every first-hitting reveal:</text>
+<text x="1017.0" y="305.5" text-anchor="middle" class="bl">draw n_is = 100 candidate blocks from the</text>
+<text x="1017.0" y="321.0" text-anchor="middle" class="bl">denoiser marginal (adjacency-masked, Lemma 3)</text>
+<text x="1017.0" y="336.5" text-anchor="middle" class="mn">score [ committed prefix ‖ candidate ]</text>
+<text x="1017.0" y="352.0" text-anchor="middle" class="mn">truncate: after dst, before END/PAD/MASK</text>
+<text x="1017.0" y="367.5" text-anchor="middle" class="mn">w ∝ exp( γ ℓ ) = ( D / (1−D) )^γ</text>
+<text x="1017.0" y="383.0" text-anchor="middle" class="mn">        ≈ ( q_exc / p_ref )^γ</text>
+<text x="1017.0" y="398.5" text-anchor="middle" class="mn">self-normalise → x̄₀ → reveal one token</text>
+<text x="1017.0" y="414.0" text-anchor="middle" class="mn">cost: L · n_is discriminator calls per path</text>
+<rect x="874" y="500" width="286" height="154" rx="6" fill="#ffffff" stroke="#9aa5b1" stroke-width="1.1"/>
+<text x="1017.0" y="521" text-anchor="middle" class="bt" fill="#1f2933">Use 2 — validity probe (DISC_VALIDITY)</text>
+<text x="1017.0" y="540.0" text-anchor="middle" class="bl">held-out positives:</text>
+<text x="1017.0" y="555.5" text-anchor="middle" class="bl">  except_0 reserve  /  except_1 outside the slice</text>
+<text x="1017.0" y="571.0" text-anchor="middle" class="bl">negatives: fresh seed-99 pool or seed-555 normal</text>
+<text x="1017.0" y="586.5" text-anchor="middle" class="bl">identical make_partial truncation as training</text>
+<text x="1017.0" y="602.0" text-anchor="middle" class="mn">accuracy@0 and AUC on the balanced set,</text>
+<text x="1017.0" y="617.5" text-anchor="middle" class="mn">plus e0-vs-e99 logit correlation</text>
+<line x1="806" y1="671" x2="842" y2="671" stroke="#616e7c" stroke-width="1.3"/>
+<line x1="842" y1="132" x2="842" y2="671" stroke="#616e7c" stroke-width="1.3"/>
+<line x1="842" y1="132" x2="867" y2="132" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<line x1="842" y1="341" x2="867" y2="341" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<line x1="842" y1="577" x2="867" y2="577" stroke="#616e7c" stroke-width="1.3" marker-end="url(#ar)"/>
+<text x="824.0" y="664" text-anchor="middle" class="ed">ℓ</text>
+<line x1="26" y1="732" x2="58" y2="732" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3"/>
+<text x="66" y="736" class="eda">scenario input: A_scn, deg_ratio</text>
+<text x="1176" y="736" text-anchor="end" class="src">models_seq/bd_disc.py · train_bd_disc.py · bd_models.py::_denoise_block_mask_guided · disc_gen_eval.py</text>
+<text x="24" y="762" class="cap">The scenario enters at exactly two places (amber): the GraphSAGE embedding and the edge-existence / degree-ratio channel. Both read the adjacency as an</text>
+<text x="24" y="778" class="cap">input rather than memorising it, which is why a discriminator trained on except 1–99 transfers zero-shot to the unseen except_0 scenario.</text>
+</svg>

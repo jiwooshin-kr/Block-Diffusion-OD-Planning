@@ -30,7 +30,7 @@ CUDA_VISIBLE_DEVICES=2 python -u train_e99_model_multi.py -family 0.1 \
     CUDA_VISIBLE_DEVICES=3 python -u gen_bd_uncond_pool.py -ckpt $(CK $B) \
       -out $D/geneval_pool_blk$B.pth -n 5000 -seed 99 > $L/geneval_pool_blk$B.log 2>&1 || echo "pool blk$B FAIL"
   done
-  CUDA_VISIBLE_DEVICES=3 python -u disc_gen_eval.py -family 0.05 > $R/disc_gen_eval_f005.log 2>&1 || echo "disc_gen f0.05 FAIL"
+  CUDA_VISIBLE_DEVICES=3 python -u disc_gen_eval.py -family 0.05 -pool_pat "$D/geneval_pool_blk{B}.pth" > $R/disc_gen_eval_f005.log 2>&1 || echo "disc_gen f0.05 FAIL"
 ) &
 wait
 echo "=== STAGE1 done ($(date)) ==="
@@ -54,7 +54,7 @@ wait
 echo "=== STAGE2 done ($(date)) ==="
 
 echo "=== STAGE3: disc_gen_eval f0.1 ==="
-CUDA_VISIBLE_DEVICES=0 python -u disc_gen_eval.py -family 0.1 > $R/disc_gen_eval_f01.log 2>&1 || echo "disc_gen f0.1 FAIL"
+CUDA_VISIBLE_DEVICES=0 python -u disc_gen_eval.py -family 0.1 -pool_pat "$D/geneval_pool_blk{B}.pth" > $R/disc_gen_eval_f01.log 2>&1 || echo "disc_gen f0.1 FAIL"
 
 echo FAM01_ALL_DONE > $L/fam01_done.marker
 echo "FAM01_ALL_DONE ($(date))"
