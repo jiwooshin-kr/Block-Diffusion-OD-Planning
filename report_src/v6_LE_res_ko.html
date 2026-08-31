@@ -1,0 +1,259 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<title>v6 LE 결과 — IW guidance 3-arm</title><style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 10.5px; line-height: 1.55; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.4px; }
+  th, td { border: 1px solid #bbb; padding: 3.5px 6px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  td.num, th.num { text-align: right; }
+  .status-box { background: #fff8e6; border: 1.5px solid #e6c260; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .best { font-weight: 700; }
+  .small { font-size: 8.9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .muted { color: #666; font-style: italic; }
+</style></head><body>
+
+<h1>v6 데이터(LE 1.0 / 0.05) IW guidance 결과 — iclr_iw_exp §5.6 형식</h1>
+
+<p>기존 보고서 <span class="mono">pdfs/iclr_iw_exp.pdf</span> §5.6.1(seen) / §5.6.2(unseen)의 표를
+<b>새 데이터셋에서 그대로 재현</b>한 기록. 프로토콜은 원본과 동일하다 — masked block diffusion,
+left-to-right 공개 순서, n<sub>is</sub> = 100, &gamma; = 1, except_0 예약 OD 쌍 1,000개, RAW(후처리 없음),
+seed 7. 바뀐 것은 <b>데이터</b>와 <b>지표 두 개</b>뿐이며 그 이유는 §5에 적었다.</p>
+
+<h2>1. 세 arm</h2>
+<table>
+<tr><th>표기</th><th>코드</th><th>내용</th></tr>
+<tr><td>Adj-only</td><td class="mono">plan_guided(disc=None, adj_prop=True)</td>
+    <td>Lemma 3 인접성 마스킹만. <b>판별자를 쓰지 않으므로 seen/unseen 표에서 행이 동일</b>하다</td></tr>
+<tr><td>IW-only</td><td class="mono">plan_guided(disc=D, adj_prop=False)</td>
+    <td>판별자 SNIS 재가중만</td></tr>
+<tr><td>Adj+IW</td><td class="mono">plan_guided(disc=D, adj_prop=True)</td><td>제안 방법</td></tr>
+<tr><td>(base)</td><td class="mono">plan()</td><td>unguided. 행으로 싣지 않고 괄호 안 증감의 기준선</td></tr>
+</table>
+<p class="small">판별자는 <b>positives = 예외 시나리오 실데이터 1%</b>, <b>negatives = 해당 블록 백본의
+무조건 생성 20,000개</b>(<span class="mono">-neg model</span>)로 학습했다. 밀도비
+exp(logit) = D/(1&minus;D) &asymp; q<sub>exc</sub>/p<sub>&theta;</sub>의 분모가 p<sub>&theta;</sub>여야 하기 때문이다.
+seen은 except_0(평가 예약 1,000개 제외)로, unseen은 except_1&ndash;99로 학습해 except_0에 zero-shot 적용한다.</p>
+
+<h2>2. base (unguided) 기준선</h2>
+<table><tr><th>blk</th><th class="num">valid</th><th class="num">arrival</th><th class="num">valid &amp; arrival</th><th class="num">EM</th><th class="num">DTW&darr;</th><th class="num">LCS/|ref|</th><th class="num">gen_len</th></tr>
+<tr><td>1</td><td class="num">0.275</td><td class="num">0.993</td><td class="num">0.275</td><td class="num">0.054</td><td class="num">0.172</td><td class="num">0.547</td><td class="num">28.3</td></tr>
+<tr><td>2</td><td class="num">0.230</td><td class="num">0.986</td><td class="num">0.229</td><td class="num">0.059</td><td class="num">0.164</td><td class="num">0.553</td><td class="num">27.7</td></tr>
+<tr><td>4</td><td class="num">0.274</td><td class="num">0.963</td><td class="num">0.268</td><td class="num">0.069</td><td class="num">0.168</td><td class="num">0.537</td><td class="num">28.0</td></tr>
+<tr><td>8</td><td class="num">0.250</td><td class="num">0.933</td><td class="num">0.232</td><td class="num">0.066</td><td class="num">0.175</td><td class="num">0.525</td><td class="num">28.2</td></tr>
+<tr><td>16</td><td class="num">0.211</td><td class="num">0.921</td><td class="num">0.195</td><td class="num">0.057</td><td class="num">0.161</td><td class="num">0.531</td><td class="num">27.7</td></tr>
+<tr><td>32</td><td class="num">0.189</td><td class="num">0.887</td><td class="num">0.170</td><td class="num">0.035</td><td class="num">0.240</td><td class="num">0.477</td><td class="num">29.2</td></tr>
+<tr><td>64</td><td class="num">0.173</td><td class="num">0.738</td><td class="num">0.121</td><td class="num">0.030</td><td class="num">0.210</td><td class="num">0.482</td><td class="num">27.9</td></tr></table>
+
+<h2>2b. 지표의 천장 — 정답이 확률적 표본이라는 점</h2>
+<p>이 데이터의 정답 경로는 <b>choice set 생성 + 확률적 선택</b>으로 만들어졌다.
+LE = <b>Link Elimination</b>으로 OD마다 대안 경로 집합
+C<sub>od</sub>를 만들고, Path-Size Logit(폴더명의 1.0 = Beta &gt; 0)으로 확률을 부여한 뒤
+<b>그 분포에서 경로 하나를 확률적으로 추출</b>해 기록한 것이다. 실제로 참조 경로는 최단경로보다
+평균 <b>+4.4홉</b> 길고(중앙값 +3, 최소 +0) 최단보다 짧은 경우는 하나도 없다 — C<sub>od</sub>의 한 원소라는 구조와 일치한다.</p>
+<p>따라서 <b>같은 분포에서 뽑은 두 표본조차 서로 일치하지 않는다.</b> 그 일치율이
+참조 대비 지표(EM / DTW / LCS)가 도달할 수 있는 상한이다 — EM = 1.0, LCS = 1.0, DTW = 0 이 아니다.
+아래 값은 normal과 except_1&ndash;5의 추출을 except_0 참조와 맞대어 측정했다
+(두 경로가 양쪽 그래프에서 모두 적법한 OD만 사용, 총 1053쌍).</p>
+<table>
+<tr><th>지표</th><th class="num">천장 (독립 추출 2개)</th><th class="num">우리 최고 (blk2 Adj+IW, unseen)</th><th class="num">천장 대비</th></tr>
+<tr><td>경로 완전 일치</td><td class="num">0.527</td><td class="num muted">&mdash;</td><td class="num muted">&mdash;</td></tr>
+<tr><td>EM (길이 일치)</td><td class="num"><b>0.611</b></td><td class="num">0.175</td><td class="num">29%</td></tr>
+<tr><td>EM (|&Delta;len| &le; 1)</td><td class="num">0.740</td><td class="num muted">&mdash;</td><td class="num muted">&mdash;</td></tr>
+<tr><td>DTW (낮을수록 좋음)</td><td class="num"><b>0.044</b></td><td class="num">0.159</td><td class="num">3.6&times;</td></tr>
+<tr><td>LCS/|ref|</td><td class="num"><b>0.829</b></td><td class="num">0.591</td><td class="num">71%</td></tr>
+</table>
+<p><b>이 표가 §3을 읽는 법을 바꾼다.</b> EM 0.175를 &ldquo;17.5%만 맞혔다&rdquo;로 읽으면 틀리고
+&ldquo;천장 0.61의 29%&rdquo;로 읽어야 한다. LCS는 천장의
+71%까지 와 있다. 반면 <b>valid / arrival / valid &amp; arrival은
+참조 경로가 전혀 필요 없는 지표</b>(생성 경로가 시나리오 그래프에서 적법한가, 목적지에 닿았는가)이므로
+이 문제의 영향을 받지 않는다 — 헤드라인을 valid &amp; arrival로 두는 이유다.</p>
+<p class="small"><b>남은 한계.</b> 이 천장은 &ldquo;표본 대 표본&rdquo; 비교의 한계일 뿐이며, 근본적으로는
+비교 대상이 분포가 되어야 한다. 데이터에는 normal + except_0&ndash;99 = 같은 OD에 대한 101번의 추출이
+들어 있으므로, 제거 edge의 영향을 받지 않은 추출만 모으면 <b>OD당 약 30개의 정답 표본과 경로별 빈도</b>를
+생성기 코드 없이 복원할 수 있다(시나리오 21개로 실측 시 OD당 유효 추출 6.7개, 고유 경로 2.9개,
+77%의 OD에서 2개 이상 확보). 그러면 choice set 소속률과 분포 거리(JS)를 직접 잴 수 있다 — 다음 단계로 등재.</p>
+
+<h2>3. 세 arm — 블록별</h2>
+<p class="small">굵은 값은 같은 블록 세 arm 중 최고(DTW는 낮을수록 좋으므로 최소값),
+괄호 안 회색 값은 그 블록 base 대비 증감. Adj-only 행은 두 표에서 동일하다 —
+각 표를 독립적으로 읽을 수 있도록 생략하지 않고 반복했다.</p>
+
+<h3>3.1 seen (판별자 = except_0 vs p<sub>&theta;</sub>)</h3>
+<table><tr><th>blk</th><th>구성</th><th class="num">valid</th><th class="num">arrival</th><th class="num">valid &amp; arrival</th><th class="num">EM</th><th class="num">DTW&darr;</th><th class="num">LCS/|ref|</th></tr>
+<tr><td rowspan=3>1</td><td>Adj-only</td><td class="num">0.998 <span class="muted">(+0.723)</span></td><td class="num">0.762 <span class="muted">(-0.231)</span></td><td class="num">0.762 <span class="muted">(+0.487)</span></td><td class="num"><b>0.134</b> <span class="muted">(+0.080)</span></td><td class="num">0.182 <span class="muted">(+0.010)</span></td><td class="num">0.565 <span class="muted">(+0.018)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.407 <span class="muted">(+0.132)</span></td><td class="num"><b>0.999</b> <span class="muted">(+0.006)</span></td><td class="num">0.407 <span class="muted">(+0.132)</span></td><td class="num">0.106 <span class="muted">(+0.052)</span></td><td class="num"><b>0.149</b> <span class="muted">(-0.023)</span></td><td class="num"><b>0.580</b> <span class="muted">(+0.032)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.999</b> <span class="muted">(+0.724)</span></td><td class="num">0.771 <span class="muted">(-0.222)</span></td><td class="num"><b>0.771</b> <span class="muted">(+0.496)</span></td><td class="num">0.127 <span class="muted">(+0.073)</span></td><td class="num">0.176 <span class="muted">(+0.004)</span></td><td class="num">0.569 <span class="muted">(+0.022)</span></td></tr>
+<tr><td rowspan=3>2</td><td>Adj-only</td><td class="num">0.994 <span class="muted">(+0.764)</span></td><td class="num">0.783 <span class="muted">(-0.203)</span></td><td class="num">0.777 <span class="muted">(+0.548)</span></td><td class="num">0.146 <span class="muted">(+0.087)</span></td><td class="num">0.174 <span class="muted">(+0.010)</span></td><td class="num">0.568 <span class="muted">(+0.015)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.415 <span class="muted">(+0.185)</span></td><td class="num"><b>0.979</b> <span class="muted">(-0.007)</span></td><td class="num">0.403 <span class="muted">(+0.174)</span></td><td class="num">0.106 <span class="muted">(+0.047)</span></td><td class="num"><b>0.142</b> <span class="muted">(-0.022)</span></td><td class="num">0.580 <span class="muted">(+0.027)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.996</b> <span class="muted">(+0.766)</span></td><td class="num">0.800 <span class="muted">(-0.186)</span></td><td class="num"><b>0.797</b> <span class="muted">(+0.568)</span></td><td class="num"><b>0.170</b> <span class="muted">(+0.111)</span></td><td class="num">0.162 <span class="muted">(-0.002)</span></td><td class="num"><b>0.586</b> <span class="muted">(+0.033)</span></td></tr>
+<tr><td rowspan=3>4</td><td>Adj-only</td><td class="num">0.987 <span class="muted">(+0.713)</span></td><td class="num">0.703 <span class="muted">(-0.260)</span></td><td class="num">0.701 <span class="muted">(+0.433)</span></td><td class="num">0.121 <span class="muted">(+0.052)</span></td><td class="num">0.211 <span class="muted">(+0.043)</span></td><td class="num">0.533 <span class="muted">(-0.004)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.394 <span class="muted">(+0.120)</span></td><td class="num"><b>0.976</b> <span class="muted">(+0.013)</span></td><td class="num">0.385 <span class="muted">(+0.117)</span></td><td class="num">0.104 <span class="muted">(+0.035)</span></td><td class="num"><b>0.150</b> <span class="muted">(-0.018)</span></td><td class="num">0.564 <span class="muted">(+0.028)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.996</b> <span class="muted">(+0.722)</span></td><td class="num">0.738 <span class="muted">(-0.225)</span></td><td class="num"><b>0.738</b> <span class="muted">(+0.470)</span></td><td class="num"><b>0.181</b> <span class="muted">(+0.112)</span></td><td class="num">0.185 <span class="muted">(+0.017)</span></td><td class="num"><b>0.574</b> <span class="muted">(+0.038)</span></td></tr>
+<tr><td rowspan=3>8</td><td>Adj-only</td><td class="num"><b>0.999</b> <span class="muted">(+0.749)</span></td><td class="num">0.692 <span class="muted">(-0.241)</span></td><td class="num">0.692 <span class="muted">(+0.460)</span></td><td class="num">0.102 <span class="muted">(+0.036)</span></td><td class="num">0.215 <span class="muted">(+0.040)</span></td><td class="num">0.532 <span class="muted">(+0.006)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.395 <span class="muted">(+0.145)</span></td><td class="num"><b>0.933</b> <span class="muted">(0.000)</span></td><td class="num">0.366 <span class="muted">(+0.134)</span></td><td class="num">0.110 <span class="muted">(+0.044)</span></td><td class="num"><b>0.154</b> <span class="muted">(-0.021)</span></td><td class="num">0.559 <span class="muted">(+0.033)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num">0.996 <span class="muted">(+0.746)</span></td><td class="num">0.731 <span class="muted">(-0.202)</span></td><td class="num"><b>0.731</b> <span class="muted">(+0.499)</span></td><td class="num"><b>0.164</b> <span class="muted">(+0.098)</span></td><td class="num">0.198 <span class="muted">(+0.023)</span></td><td class="num"><b>0.560</b> <span class="muted">(+0.035)</span></td></tr>
+<tr><td rowspan=3>16</td><td>Adj-only</td><td class="num">0.985 <span class="muted">(+0.774)</span></td><td class="num">0.682 <span class="muted">(-0.239)</span></td><td class="num">0.675 <span class="muted">(+0.480)</span></td><td class="num">0.119 <span class="muted">(+0.062)</span></td><td class="num">0.214 <span class="muted">(+0.053)</span></td><td class="num">0.526 <span class="muted">(-0.005)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.324 <span class="muted">(+0.113)</span></td><td class="num"><b>0.919</b> <span class="muted">(-0.002)</span></td><td class="num">0.292 <span class="muted">(+0.097)</span></td><td class="num">0.083 <span class="muted">(+0.026)</span></td><td class="num"><b>0.149</b> <span class="muted">(-0.012)</span></td><td class="num"><b>0.553</b> <span class="muted">(+0.022)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.991</b> <span class="muted">(+0.780)</span></td><td class="num">0.695 <span class="muted">(-0.226)</span></td><td class="num"><b>0.690</b> <span class="muted">(+0.495)</span></td><td class="num"><b>0.170</b> <span class="muted">(+0.113)</span></td><td class="num">0.209 <span class="muted">(+0.048)</span></td><td class="num">0.547 <span class="muted">(+0.016)</span></td></tr>
+<tr><td rowspan=3>32</td><td>Adj-only</td><td class="num"><b>0.995</b> <span class="muted">(+0.806)</span></td><td class="num">0.597 <span class="muted">(-0.290)</span></td><td class="num"><b>0.592</b> <span class="muted">(+0.422)</span></td><td class="num">0.091 <span class="muted">(+0.056)</span></td><td class="num">0.336 <span class="muted">(+0.096)</span></td><td class="num">0.477 <span class="muted">(0.000)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.283 <span class="muted">(+0.094)</span></td><td class="num"><b>0.894</b> <span class="muted">(+0.007)</span></td><td class="num">0.245 <span class="muted">(+0.075)</span></td><td class="num">0.052 <span class="muted">(+0.017)</span></td><td class="num"><b>0.239</b> <span class="muted">(-0.001)</span></td><td class="num"><b>0.486</b> <span class="muted">(+0.009)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num">0.994 <span class="muted">(+0.805)</span></td><td class="num">0.583 <span class="muted">(-0.304)</span></td><td class="num">0.579 <span class="muted">(+0.409)</span></td><td class="num"><b>0.100</b> <span class="muted">(+0.065)</span></td><td class="num">0.349 <span class="muted">(+0.109)</span></td><td class="num">0.460 <span class="muted">(-0.017)</span></td></tr>
+<tr><td rowspan=3>64</td><td>Adj-only</td><td class="num">0.981 <span class="muted">(+0.808)</span></td><td class="num">0.442 <span class="muted">(-0.296)</span></td><td class="num">0.430 <span class="muted">(+0.309)</span></td><td class="num">0.117 <span class="muted">(+0.087)</span></td><td class="num">0.267 <span class="muted">(+0.057)</span></td><td class="num">0.488 <span class="muted">(+0.006)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.271 <span class="muted">(+0.098)</span></td><td class="num"><b>0.685</b> <span class="muted">(-0.053)</span></td><td class="num">0.165 <span class="muted">(+0.044)</span></td><td class="num">0.065 <span class="muted">(+0.035)</span></td><td class="num"><b>0.200</b> <span class="muted">(-0.010)</span></td><td class="num"><b>0.495</b> <span class="muted">(+0.012)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.983</b> <span class="muted">(+0.810)</span></td><td class="num">0.453 <span class="muted">(-0.285)</span></td><td class="num"><b>0.444</b> <span class="muted">(+0.323)</span></td><td class="num"><b>0.158</b> <span class="muted">(+0.128)</span></td><td class="num">0.284 <span class="muted">(+0.074)</span></td><td class="num">0.477 <span class="muted">(-0.005)</span></td></tr></table>
+
+<h3>3.2 unseen (판별자 = except_1&ndash;99 vs p<sub>&theta;</sub> &rarr; except_0 zero-shot)</h3>
+<table><tr><th>blk</th><th>구성</th><th class="num">valid</th><th class="num">arrival</th><th class="num">valid &amp; arrival</th><th class="num">EM</th><th class="num">DTW&darr;</th><th class="num">LCS/|ref|</th></tr>
+<tr><td rowspan=3>1</td><td>Adj-only</td><td class="num">0.998 <span class="muted">(+0.723)</span></td><td class="num">0.762 <span class="muted">(-0.231)</span></td><td class="num"><b>0.762</b> <span class="muted">(+0.487)</span></td><td class="num"><b>0.134</b> <span class="muted">(+0.080)</span></td><td class="num">0.182 <span class="muted">(+0.010)</span></td><td class="num">0.565 <span class="muted">(+0.018)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.386 <span class="muted">(+0.111)</span></td><td class="num"><b>0.997</b> <span class="muted">(+0.004)</span></td><td class="num">0.386 <span class="muted">(+0.111)</span></td><td class="num">0.093 <span class="muted">(+0.039)</span></td><td class="num"><b>0.146</b> <span class="muted">(-0.026)</span></td><td class="num"><b>0.568</b> <span class="muted">(+0.021)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>1.000</b> <span class="muted">(+0.725)</span></td><td class="num">0.754 <span class="muted">(-0.239)</span></td><td class="num">0.754 <span class="muted">(+0.479)</span></td><td class="num">0.126 <span class="muted">(+0.072)</span></td><td class="num">0.178 <span class="muted">(+0.006)</span></td><td class="num">0.564 <span class="muted">(+0.017)</span></td></tr>
+<tr><td rowspan=3>2</td><td>Adj-only</td><td class="num">0.994 <span class="muted">(+0.764)</span></td><td class="num">0.783 <span class="muted">(-0.203)</span></td><td class="num">0.777 <span class="muted">(+0.548)</span></td><td class="num">0.146 <span class="muted">(+0.087)</span></td><td class="num">0.174 <span class="muted">(+0.010)</span></td><td class="num">0.568 <span class="muted">(+0.015)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.404 <span class="muted">(+0.174)</span></td><td class="num"><b>0.983</b> <span class="muted">(-0.003)</span></td><td class="num">0.397 <span class="muted">(+0.168)</span></td><td class="num">0.106 <span class="muted">(+0.047)</span></td><td class="num"><b>0.144</b> <span class="muted">(-0.020)</span></td><td class="num">0.577 <span class="muted">(+0.024)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.997</b> <span class="muted">(+0.767)</span></td><td class="num">0.792 <span class="muted">(-0.194)</span></td><td class="num"><b>0.790</b> <span class="muted">(+0.561)</span></td><td class="num"><b>0.175</b> <span class="muted">(+0.116)</span></td><td class="num">0.159 <span class="muted">(-0.005)</span></td><td class="num"><b>0.591</b> <span class="muted">(+0.038)</span></td></tr>
+<tr><td rowspan=3>4</td><td>Adj-only</td><td class="num">0.987 <span class="muted">(+0.713)</span></td><td class="num">0.703 <span class="muted">(-0.260)</span></td><td class="num">0.701 <span class="muted">(+0.433)</span></td><td class="num">0.121 <span class="muted">(+0.052)</span></td><td class="num">0.211 <span class="muted">(+0.043)</span></td><td class="num">0.533 <span class="muted">(-0.004)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.390 <span class="muted">(+0.116)</span></td><td class="num"><b>0.973</b> <span class="muted">(+0.010)</span></td><td class="num">0.379 <span class="muted">(+0.111)</span></td><td class="num">0.102 <span class="muted">(+0.033)</span></td><td class="num"><b>0.152</b> <span class="muted">(-0.016)</span></td><td class="num">0.566 <span class="muted">(+0.030)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.993</b> <span class="muted">(+0.719)</span></td><td class="num">0.747 <span class="muted">(-0.216)</span></td><td class="num"><b>0.747</b> <span class="muted">(+0.479)</span></td><td class="num"><b>0.174</b> <span class="muted">(+0.105)</span></td><td class="num">0.181 <span class="muted">(+0.013)</span></td><td class="num"><b>0.574</b> <span class="muted">(+0.037)</span></td></tr>
+<tr><td rowspan=3>8</td><td>Adj-only</td><td class="num"><b>0.999</b> <span class="muted">(+0.749)</span></td><td class="num">0.692 <span class="muted">(-0.241)</span></td><td class="num">0.692 <span class="muted">(+0.460)</span></td><td class="num">0.102 <span class="muted">(+0.036)</span></td><td class="num">0.215 <span class="muted">(+0.040)</span></td><td class="num">0.532 <span class="muted">(+0.006)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.402 <span class="muted">(+0.152)</span></td><td class="num"><b>0.930</b> <span class="muted">(-0.003)</span></td><td class="num">0.373 <span class="muted">(+0.141)</span></td><td class="num">0.110 <span class="muted">(+0.044)</span></td><td class="num"><b>0.154</b> <span class="muted">(-0.022)</span></td><td class="num"><b>0.561</b> <span class="muted">(+0.035)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num">0.996 <span class="muted">(+0.746)</span></td><td class="num">0.730 <span class="muted">(-0.203)</span></td><td class="num"><b>0.730</b> <span class="muted">(+0.498)</span></td><td class="num"><b>0.169</b> <span class="muted">(+0.103)</span></td><td class="num">0.202 <span class="muted">(+0.027)</span></td><td class="num">0.557 <span class="muted">(+0.031)</span></td></tr>
+<tr><td rowspan=3>16</td><td>Adj-only</td><td class="num">0.985 <span class="muted">(+0.774)</span></td><td class="num">0.682 <span class="muted">(-0.239)</span></td><td class="num">0.675 <span class="muted">(+0.480)</span></td><td class="num">0.119 <span class="muted">(+0.062)</span></td><td class="num">0.214 <span class="muted">(+0.053)</span></td><td class="num">0.526 <span class="muted">(-0.005)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.332 <span class="muted">(+0.121)</span></td><td class="num"><b>0.914</b> <span class="muted">(-0.007)</span></td><td class="num">0.296 <span class="muted">(+0.101)</span></td><td class="num">0.088 <span class="muted">(+0.031)</span></td><td class="num"><b>0.148</b> <span class="muted">(-0.013)</span></td><td class="num"><b>0.554</b> <span class="muted">(+0.023)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.988</b> <span class="muted">(+0.777)</span></td><td class="num">0.701 <span class="muted">(-0.220)</span></td><td class="num"><b>0.694</b> <span class="muted">(+0.499)</span></td><td class="num"><b>0.160</b> <span class="muted">(+0.103)</span></td><td class="num">0.213 <span class="muted">(+0.052)</span></td><td class="num">0.548 <span class="muted">(+0.017)</span></td></tr>
+<tr><td rowspan=3>32</td><td>Adj-only</td><td class="num"><b>0.995</b> <span class="muted">(+0.806)</span></td><td class="num">0.597 <span class="muted">(-0.290)</span></td><td class="num"><b>0.592</b> <span class="muted">(+0.422)</span></td><td class="num">0.091 <span class="muted">(+0.056)</span></td><td class="num">0.336 <span class="muted">(+0.096)</span></td><td class="num">0.477 <span class="muted">(0.000)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.283 <span class="muted">(+0.094)</span></td><td class="num"><b>0.893</b> <span class="muted">(+0.006)</span></td><td class="num">0.243 <span class="muted">(+0.073)</span></td><td class="num">0.051 <span class="muted">(+0.016)</span></td><td class="num"><b>0.240</b> <span class="muted">(0.000)</span></td><td class="num"><b>0.484</b> <span class="muted">(+0.007)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.995</b> <span class="muted">(+0.806)</span></td><td class="num">0.586 <span class="muted">(-0.301)</span></td><td class="num">0.583 <span class="muted">(+0.413)</span></td><td class="num"><b>0.099</b> <span class="muted">(+0.064)</span></td><td class="num">0.345 <span class="muted">(+0.104)</span></td><td class="num">0.462 <span class="muted">(-0.015)</span></td></tr>
+<tr><td rowspan=3>64</td><td>Adj-only</td><td class="num">0.981 <span class="muted">(+0.808)</span></td><td class="num">0.442 <span class="muted">(-0.296)</span></td><td class="num">0.430 <span class="muted">(+0.309)</span></td><td class="num">0.117 <span class="muted">(+0.087)</span></td><td class="num">0.267 <span class="muted">(+0.057)</span></td><td class="num">0.488 <span class="muted">(+0.006)</span></td></tr>
+<tr><td>IW-only</td><td class="num">0.267 <span class="muted">(+0.094)</span></td><td class="num"><b>0.690</b> <span class="muted">(-0.048)</span></td><td class="num">0.165 <span class="muted">(+0.044)</span></td><td class="num">0.066 <span class="muted">(+0.036)</span></td><td class="num"><b>0.201</b> <span class="muted">(-0.009)</span></td><td class="num"><b>0.495</b> <span class="muted">(+0.012)</span></td></tr>
+<tr><td>Adj+IW</td><td class="num"><b>0.983</b> <span class="muted">(+0.810)</span></td><td class="num">0.453 <span class="muted">(-0.285)</span></td><td class="num"><b>0.444</b> <span class="muted">(+0.323)</span></td><td class="num"><b>0.154</b> <span class="muted">(+0.124)</span></td><td class="num">0.287 <span class="muted">(+0.077)</span></td><td class="num">0.475 <span class="muted">(-0.008)</span></td></tr></table>
+
+<p class="small">EM / DTW / LCS는 천장이 각각 0.611 / 0.044 / 0.829이다(&sect;2b). valid &middot; arrival &middot; valid &amp; arrival은 참조와 무관하므로 천장이 1.0이다.</p>
+
+<p><b>읽기.</b> 핵심 열은 valid &amp; arrival이다(모든 edge가 A<sub>scn</sub>에서 적법 <i>그리고</i> 종점이 목적지 —
+테스트 시점에 확인 가능한 수용 기준). 최고값은 seen <b>0.797</b>(blk2, Adj+IW),
+unseen <b>0.790</b>(blk2, Adj+IW). <b>seen과 unseen이 거의 같다</b> —
+99개의 다른 시나리오만 보고 학습한 판별자가 한 번도 못 본 except_0에서 사실상 동일하게 작동한다.
+원본 보고서의 결론이 새 데이터에서 재현됐다.</p>
+
+<h2>4. 구 데이터(§5.6.2) 대비</h2>
+<p class="small">같은 unseen 체제, 같은 프로토콜. 회색이 구 데이터(porto v4-0.05, V = 1,390,
+정답 = 최단경로), 굵은 값이 v6 LE(V = 1,387, 정답 = 최단경로가 <b>아닌</b> 참조 경로).
+데이터가 다르므로 절대값 비교가 아니라 <b>arm 간 관계</b>가 어떻게 달라졌는지를 본다.</p>
+<table><tr><th rowspan=2>blk</th><th rowspan=2>구성</th><th class="num" colspan=2>valid</th><th class="num" colspan=2>valid &amp; arrival</th><th class="num" colspan=2>EM</th></tr><tr><th class="num">구 v4</th><th class="num">v6 LE</th><th class="num">구 v4</th><th class="num">v6 LE</th><th class="num">구 v4</th><th class="num">v6 LE</th></tr>
+<tr><td rowspan=3>1</td><td>Adj-only</td><td class="num muted">0.928</td><td class="num"><b>0.998</b></td><td class="num muted">0.513</td><td class="num"><b>0.762</b></td><td class="num muted">0.356</td><td class="num"><b>0.134</b></td></tr>
+<tr><td>IW-only</td><td class="num muted">0.327</td><td class="num"><b>0.386</b></td><td class="num muted">0.324</td><td class="num"><b>0.386</b></td><td class="num muted">0.283</td><td class="num"><b>0.093</b></td></tr>
+<tr><td>Adj+IW</td><td class="num muted">0.928</td><td class="num"><b>1.000</b></td><td class="num muted">0.527</td><td class="num"><b>0.754</b></td><td class="num muted">0.354</td><td class="num"><b>0.126</b></td></tr>
+<tr><td rowspan=3>2</td><td>Adj-only</td><td class="num muted">0.866</td><td class="num"><b>0.994</b></td><td class="num muted">0.547</td><td class="num"><b>0.777</b></td><td class="num muted">0.395</td><td class="num"><b>0.146</b></td></tr>
+<tr><td>IW-only</td><td class="num muted">0.328</td><td class="num"><b>0.404</b></td><td class="num muted">0.321</td><td class="num"><b>0.397</b></td><td class="num muted">0.298</td><td class="num"><b>0.106</b></td></tr>
+<tr><td>Adj+IW</td><td class="num muted">0.863</td><td class="num"><b>0.997</b></td><td class="num muted">0.574</td><td class="num"><b>0.790</b></td><td class="num muted">0.431</td><td class="num"><b>0.175</b></td></tr>
+<tr><td rowspan=3>4</td><td>Adj-only</td><td class="num muted">0.769</td><td class="num"><b>0.987</b></td><td class="num muted">0.555</td><td class="num"><b>0.701</b></td><td class="num muted">0.409</td><td class="num"><b>0.121</b></td></tr>
+<tr><td>IW-only</td><td class="num muted">0.336</td><td class="num"><b>0.390</b></td><td class="num muted">0.326</td><td class="num"><b>0.379</b></td><td class="num muted">0.303</td><td class="num"><b>0.102</b></td></tr>
+<tr><td>Adj+IW</td><td class="num muted">0.765</td><td class="num"><b>0.993</b></td><td class="num muted">0.561</td><td class="num"><b>0.747</b></td><td class="num muted">0.439</td><td class="num"><b>0.174</b></td></tr>
+<tr><td rowspan=3>8</td><td>Adj-only</td><td class="num muted">0.761</td><td class="num"><b>0.999</b></td><td class="num muted">0.476</td><td class="num"><b>0.692</b></td><td class="num muted">0.366</td><td class="num"><b>0.102</b></td></tr>
+<tr><td>IW-only</td><td class="num muted">0.323</td><td class="num"><b>0.402</b></td><td class="num muted">0.304</td><td class="num"><b>0.373</b></td><td class="num muted">0.290</td><td class="num"><b>0.110</b></td></tr>
+<tr><td>Adj+IW</td><td class="num muted">0.758</td><td class="num"><b>0.996</b></td><td class="num muted">0.490</td><td class="num"><b>0.730</b></td><td class="num muted">0.393</td><td class="num"><b>0.169</b></td></tr>
+<tr><td rowspan=3>16</td><td>Adj-only</td><td class="num muted">0.749</td><td class="num"><b>0.985</b></td><td class="num muted">0.446</td><td class="num"><b>0.675</b></td><td class="num muted">0.344</td><td class="num"><b>0.119</b></td></tr>
+<tr><td>IW-only</td><td class="num muted">0.315</td><td class="num"><b>0.332</b></td><td class="num muted">0.283</td><td class="num"><b>0.296</b></td><td class="num muted">0.263</td><td class="num"><b>0.088</b></td></tr>
+<tr><td>Adj+IW</td><td class="num muted">0.748</td><td class="num"><b>0.988</b></td><td class="num muted">0.448</td><td class="num"><b>0.694</b></td><td class="num muted">0.389</td><td class="num"><b>0.160</b></td></tr>
+<tr><td rowspan=3>32</td><td>Adj-only</td><td class="num muted">0.720</td><td class="num"><b>0.995</b></td><td class="num muted">0.427</td><td class="num"><b>0.592</b></td><td class="num muted">0.336</td><td class="num"><b>0.091</b></td></tr>
+<tr><td>IW-only</td><td class="num muted">0.322</td><td class="num"><b>0.283</b></td><td class="num muted">0.269</td><td class="num"><b>0.243</b></td><td class="num muted">0.263</td><td class="num"><b>0.051</b></td></tr>
+<tr><td>Adj+IW</td><td class="num muted">0.723</td><td class="num"><b>0.995</b></td><td class="num muted">0.425</td><td class="num"><b>0.583</b></td><td class="num muted">0.378</td><td class="num"><b>0.099</b></td></tr>
+<tr><td rowspan=3>64</td><td>Adj-only</td><td class="num muted">0.821</td><td class="num"><b>0.981</b></td><td class="num muted">0.394</td><td class="num"><b>0.430</b></td><td class="num muted">0.301</td><td class="num"><b>0.117</b></td></tr>
+<tr><td>IW-only</td><td class="num muted">0.306</td><td class="num"><b>0.267</b></td><td class="num muted">0.248</td><td class="num"><b>0.165</b></td><td class="num muted">0.250</td><td class="num"><b>0.066</b></td></tr>
+<tr><td>Adj+IW</td><td class="num muted">0.828</td><td class="num"><b>0.983</b></td><td class="num muted">0.392</td><td class="num"><b>0.444</b></td><td class="num muted">0.359</td><td class="num"><b>0.154</b></td></tr></table>
+<p><b>차이 네 가지.</b></p>
+<ol>
+<li><b>Adj-only의 validity가 사실상 포화됐다</b>(0.98&ndash;1.00 vs 구 데이터 0.72&ndash;0.93).
+v6 그래프는 노드 1,387개에 edge 1,999개로 평균 차수 2.88로 훨씬 희소해서, 인접성 마스킹이 남기는
+합법 후보가 적고 그만큼 제약이 강하게 걸린다. 구 데이터에서 validity를 갉아먹던 막다른 길
+fallback(원 보고서 E4)이 여기서는 거의 발동하지 않는다.</li>
+<li><b>핵심 지표가 전반적으로 높다</b> — valid &amp; arrival 최고 0.790(v6) vs 0.574(구 데이터).</li>
+<li><b>IW가 마스킹 위에서 실제로 기여한다.</b> 구 데이터에서는 Adj-only와 Adj+IW가 거의 구분되지
+않았지만(valid 0.928 vs 0.925), v6에서는 EM이 blk4에서 0.121 &rarr; 0.181, blk64에서
+0.117 &rarr; 0.158로 뚜렷이 벌어진다. 판별자가 <i>적법성 너머의</i> 신호를 담고 있다는 뜻이다.</li>
+<li><b>최적 블록이 4에서 2로 이동했다.</b> blk32/64에서의 하락(arrival 급락)은 두 데이터에서 동일하다.</li>
+</ol>
+
+<h2>4b. 후처리 (P1 / P3) — unseen</h2>
+<p class="small"><b>P1</b>: 경로 중간의 불법 edge (u, v)를 A<sub>scn</sub> 상의 u&rarr;v 최단경로로 잇는다.
+<b>P3</b>: 목적지에 도달하지 못한 경로 끝에서 목적지까지 최단경로를 덧붙인다.
+<b>P1P3</b>: 둘 다. 굵은 값은 같은 블록·같은 후처리에서 네 arm 중 EM 최고.</p>
+<table>{pt}</table>
+<p><b>이 표가 말하는 것.</b> 새 데이터에서 후처리는 <i>정답 주입이 아니다</i>. 구 데이터에서는 정답 집합이
+최단경로였기 때문에 최단경로로 깁는 후처리가 사실상 답을 써넣는 것에 가까웠고, 원 보고서 §E5가
+바로 이 점을 지표 문제로 제기했다. v6의 참조 경로는 최단경로가 아니므로(15%만 일치) P1/P3는
+경로를 적법·도달 가능하게 <b>복구</b>할 뿐 참조 경로 쪽으로 밀어주지 않는다.</p>
+<p><b>대신 새로운 문제가 생긴다.</b> P1P3를 적용하면 valid &amp; arrival이 <b>네 arm 모두 정확히 1.000</b>이 된다 —
+이 지표는 후처리 뒤에는 arm을 전혀 구분하지 못한다. 따라서 후처리 결과를 비교할 때는
+<b>EM / DTW / LCS로 판단해야 한다</b>. 그 기준으로 보면 guidance의 이득은 후처리 뒤에도 남는다:
+blk2 P1P3에서 EM이 base {b2['base']['em']:.3f} &rarr; Adj-only {b2['adjonly']['em']:.3f}
+&rarr; IW-only {b2['modelD']['em']:.3f} &rarr; <b>Adj+IW {b2['adj+modelD']['em']:.3f}</b>이고,
+<b>Adj+IW가 7개 블록 전부에서 P1P3 EM 최고</b>다. 즉 후처리로 적법성·도달성을 공짜로 얻고 나면
+남는 차이는 &ldquo;참조 경로를 얼마나 맞혔는가&rdquo;이고 거기서 guidance가 앞선다.</p>
+
+<h2>5. 지표 — 무엇을 왜 바꿨나</h2>
+<p>새 데이터의 참조 경로는 <b>최단경로가 아니다</b>. 300개를 그래프 최단길이와 대조한 결과
+v6는 44/300(15%)만 일치하는 반면 구 데이터는 300/300(100%)이었다. 여기서 두 가지가 따라온다.</p>
+<ul>
+<li><b>PC 제외.</b> PC = 1/(그래프상 더 짧은 feasible 길이 개수 + 1)로 정의되는데, 정답 경로 자체가
+최단이 아니면 정답조차 PC &lt; 1이 되어 상한이 1이 아니게 된다. 지표가 무엇을 재는지 불분명해지므로
+표에서 뺐다(레코드 CSV에는 계산돼 남아 있다).</li>
+<li><b>EM의 의미가 바뀌었다.</b> v6는 OD당 경로가 정확히 1개(1,387 &times; 1,386 = 1,922,382 = 전체 순서쌍)이므로
+EM은 &ldquo;valid이고 <b>참조 경로 길이와 정확히 일치</b>&rdquo;가 된다. 구 데이터에서는 이것이 곧 최단성이었다.
+v6의 EM 절대값이 낮은 것은 이 때문이며, 구 데이터와 직접 비교하면 안 된다.</li>
+<li><b>DTW / LCS 추가.</b> 참조 경로와 1:1로 대응해 재는 형상 지표라 표본 크기 편향이 없다.
+DTW는 좌표 L1 &times; 100 ground distance에 max(n, m) 정규화(값이 작을수록 유사), LCS는 참조 길이로 정규화했다.</li>
+</ul>
+<p class="small"><b>구현 검증.</b> 표에 쓰인 구현을 레퍼런스와 대조했다 —
+<span class="mono">lcs_length</span> 교과서 DP와 300/300 일치,
+<span class="mono">dtw_distance</span> 표준 DTW와 200/200 일치(오차 0, 자기 자신 = 0),
+JSEV는 <span class="mono">scipy.spatial.distance.jensenshannon²</span>와 3e&minus;16 이내.
+한편 <span class="mono">utils/evaluate_plan_dtw.py::LCSSDistance</span>는
+<span class="mono">c[lena-1][lenb-1]</span>을 반환해 마지막 원소를 버리는 버그가 있다(300개 중 156개 불일치,
+<span class="mono">a=b=[1,2,3,4]</span>에 3을 반환). 이 함수는 block diffusion 파이프라인에서 쓰이지 않으므로
+본 표와 기존 보고서 수치에는 영향이 없다.</p>
+
+<h2>6. 분포 일치 (JSEV)</h2>
+<p class="small">블록별 무조건 생성 20000개의 방향성 edge 빈도 분포를
+참조 경로 <b>동일 개수</b>와 비교한 Jensen-Shannon divergence. 표본 크기를 맞춘 이유는 이 지표가
+표본 수에 강하게 편향되기 때문이다 — 같은 분포에서 뽑은 두 표본조차 n = 1,000이면 0.379,
+n = 20,000이면 0.026이 나온다. 그래서 1,000쌍짜리 §3 표에는 넣지 않고 여기서 따로 잰다.</p>
+<table><tr><th>blk</th><th class="num">JSEV (nats)</th><th class="num">JSEV (bits)</th><th class="num">Spearman</th><th class="num">R²</th><th class="num">생성 길이</th><th class="num">n</th></tr>
+<tr><td>1</td><td class="num">0.2944</td><td class="num">0.4248</td><td class="num">0.417</td><td class="num">0.177</td><td class="num">32.2 ± 16.4</td><td class="num">20000</td></tr>
+<tr><td>2</td><td class="num">0.2922</td><td class="num">0.4216</td><td class="num">0.435</td><td class="num">0.202</td><td class="num">29.1 ± 13.3</td><td class="num">20000</td></tr>
+<tr><td>4</td><td class="num">0.2928</td><td class="num">0.4225</td><td class="num">0.439</td><td class="num">0.185</td><td class="num">29.6 ± 12.6</td><td class="num">20000</td></tr>
+<tr><td>8</td><td class="num">0.3063</td><td class="num">0.4418</td><td class="num">0.372</td><td class="num">0.150</td><td class="num">30.3 ± 12.7</td><td class="num">20000</td></tr>
+<tr><td>16</td><td class="num">0.3169</td><td class="num">0.4572</td><td class="num">0.347</td><td class="num">0.179</td><td class="num">27.9 ± 12.9</td><td class="num">20000</td></tr>
+<tr><td>32</td><td class="num">0.3324</td><td class="num">0.4795</td><td class="num">0.346</td><td class="num">0.105</td><td class="num">24.9 ± 12.4</td><td class="num">20000</td></tr>
+<tr><td>64</td><td class="num">0.3235</td><td class="num">0.4666</td><td class="num">0.331</td><td class="num">0.140</td><td class="num">30.3 ± 12.9</td><td class="num">20000</td></tr>
+<tr><td colspan=5 class="muted">참조(정답 경로, 동일 표본 크기)</td><td class="num muted">24.1 ± 9.5</td><td class="num muted">20000</td></tr></table>
+
+<h2>7. 데이터와 실행</h2>
+<table>
+<tr><th>항목</th><th>v6 LE 1.0 / 0.05</th><th>구 데이터 (v4-0.05)</th></tr>
+<tr><td>노드 / edge</td><td>1,387 / 1,999 (평균 차수 2.88)</td><td>1,390</td></tr>
+<tr><td>normal 경로</td><td>1,922,382 (OD 전체 순서쌍, OD당 1개)</td><td>1,930,710</td></tr>
+<tr><td>경로 길이 평균 / 최대</td><td>27.6 / 73</td><td>23.2 / 59</td></tr>
+<tr><td>참조 경로가 최단경로</td><td>15% (44/300)</td><td>100% (300/300)</td></tr>
+<tr><td>예외 시나리오</td><td>except_0&ndash;99, 각 edge 99쌍(&asymp;5%) 제거</td><td>동일 구조</td></tr>
+</table>
+<p class="small"><b>파이프라인</b> <span class="mono">scripts/run_v6_all.sh</span> (VARIANT=LE) —
+A 백본 mask blk 1&ndash;64 7개(normal 1 epoch, bs 32, lr 5e&minus;4) &rarr;
+B 무조건 생성 pool 블록당 20,000 &rarr;
+C 판별자 e0 7개 + e99 7개(4,000 step, frac 1%) &rarr;
+D <span class="mono">tools/eval/three_way_postproc.py</span> &times; 14(order l2r, n<sub>is</sub> 100) &rarr;
+E <span class="mono">tools/collect/collect_va_table.py -shape 1</span> &rarr;
+F <span class="mono">tools/eval/eval_uncond_jsev.py</span>.
+2026-08-12 02:04&ndash;05:47 KST, 3시간 44분, RTX 3090 &times; 4, 실패 0건.
+수치 출처는 <span class="mono">sets_v6/LE/res/va_table_v6LE.json</span>,
+<span class="mono">jsev_v6LE.json</span>이며 이 문서는
+<span class="mono">report_src/build_v6.py</span>가 그 JSON에서 생성한다. 손으로 옮겨 적은 수치는 없다.</p>
+
+</body></html>

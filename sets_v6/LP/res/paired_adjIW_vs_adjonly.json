@@ -1,0 +1,106 @@
+{
+  "arm_a": "adj+modelD",
+  "arm_b": "adjonly",
+  "variant": "raw",
+  "metric": "valid_and_arrival",
+  "rows": {
+    "seen_blk1": {
+      "a": 0.783,
+      "b": 0.783,
+      "delta": 0.0,
+      "ci95": [
+        -0.022,
+        0.022024999999999635
+      ],
+      "b_only": 67,
+      "c_only": 67,
+      "mcnemar_p": 1.0,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk2": {
+      "a": 0.786,
+      "b": 0.757,
+      "delta": 0.029,
+      "ci95": [
+        0.003,
+        0.053
+      ],
+      "b_only": 98,
+      "c_only": 69,
+      "mcnemar_p": 0.02995122319610276,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk4": {
+      "a": 0.783,
+      "b": 0.752,
+      "delta": 0.031,
+      "ci95": [
+        0.006,
+        0.056
+      ],
+      "b_only": 98,
+      "c_only": 67,
+      "mcnemar_p": 0.019242012792617363,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk8": {
+      "a": 0.77,
+      "b": 0.74,
+      "delta": 0.03,
+      "ci95": [
+        0.002,
+        0.056
+      ],
+      "b_only": 109,
+      "c_only": 79,
+      "mcnemar_p": 0.03414777157006009,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk16": {
+      "a": 0.617,
+      "b": 0.613,
+      "delta": 0.004,
+      "ci95": [
+        -0.028,
+        0.037
+      ],
+      "b_only": 143,
+      "c_only": 139,
+      "mcnemar_p": 0.85825491538995,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk32": {
+      "a": 0.622,
+      "b": 0.596,
+      "delta": 0.026,
+      "ci95": [
+        -0.006,
+        0.058
+      ],
+      "b_only": 146,
+      "c_only": 120,
+      "mcnemar_p": 0.12515357836208,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk64": {
+      "a": 0.527,
+      "b": 0.482,
+      "delta": 0.045,
+      "ci95": [
+        0.013,
+        0.078
+      ],
+      "b_only": 164,
+      "c_only": 119,
+      "mcnemar_p": 0.008791301841868248,
+      "n": 1000,
+      "lower_better": false
+    }
+  }
+}

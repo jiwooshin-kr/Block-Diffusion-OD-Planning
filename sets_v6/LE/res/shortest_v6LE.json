@@ -1,0 +1,20 @@
+{
+  "arm": "shortest",
+  "method": "BFS hop-minimal path on the except_0 scenario graph",
+  "n_pairs": 1000,
+  "valid": 1.0,
+  "arrival": 1.0,
+  "valid_and_arrival": 1.0,
+  "dtw_sum": 4341.82771279138,
+  "dtw": 130.16919885607766,
+  "lcs": 12.164,
+  "lcs_norm": 0.469245087351619,
+  "gen_len": 23.937,
+  "ref_len": 28.31,
+  "unreachable": 0,
+  "n_tied": 817,
+  "ref_shorter_than_bfs": 0,
+  "ref_equal_to_bfs": 92,
+  "invariant_to_postproc": true,
+  "invariant_to_block_and_regime": true
+}

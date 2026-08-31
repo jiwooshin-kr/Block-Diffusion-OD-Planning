@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP8uns_modelD_raw",
+  "num_paths": 1000,
+  "num_valid": 412,
+  "valid_rate": 0.412,
+  "num_invalid": 588,
+  "invalid_rate": 0.588,
+  "num_em": 103,
+  "em_score": 0.103,
+  "pc_score": 0.1789069014319014
+}

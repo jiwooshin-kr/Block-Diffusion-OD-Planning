@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP32uns_dcbg_raw",
+  "num_paths": 1000,
+  "num_valid": 396,
+  "valid_rate": 0.396,
+  "num_invalid": 604,
+  "invalid_rate": 0.604,
+  "num_em": 65,
+  "em_score": 0.065,
+  "pc_score": 0.12639351587007913
+}

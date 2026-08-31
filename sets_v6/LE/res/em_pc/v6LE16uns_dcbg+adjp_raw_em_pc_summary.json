@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE16uns_dcbg+adjp_raw",
+  "num_paths": 1000,
+  "num_valid": 985,
+  "valid_rate": 0.985,
+  "num_invalid": 15,
+  "invalid_rate": 0.015,
+  "num_em": 122,
+  "em_score": 0.122,
+  "pc_score": 0.21913761727831063
+}

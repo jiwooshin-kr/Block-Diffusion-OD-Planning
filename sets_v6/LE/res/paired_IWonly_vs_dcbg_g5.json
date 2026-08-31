@@ -1,0 +1,204 @@
+{
+  "arm_a": "modelD",
+  "arm_b": "dcbg@g5",
+  "variant": "raw",
+  "metric": "valid_and_arrival",
+  "rows": {
+    "seen_blk1": {
+      "a": 0.407,
+      "b": 0.713,
+      "delta": -0.306,
+      "ci95": [
+        -0.338,
+        -0.275
+      ],
+      "b_only": 22,
+      "c_only": 328,
+      "mcnemar_p": 3.949315348222795e-71,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk2": {
+      "a": 0.403,
+      "b": 0.736,
+      "delta": -0.333,
+      "ci95": [
+        -0.367,
+        -0.298
+      ],
+      "b_only": 36,
+      "c_only": 369,
+      "mcnemar_p": 1.071048777305767e-70,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk4": {
+      "a": 0.385,
+      "b": 0.704,
+      "delta": -0.319,
+      "ci95": [
+        -0.35,
+        -0.288
+      ],
+      "b_only": 25,
+      "c_only": 344,
+      "mcnemar_p": 7.539840769252099e-73,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk8": {
+      "a": 0.366,
+      "b": 0.713,
+      "delta": -0.347,
+      "ci95": [
+        -0.382,
+        -0.311
+      ],
+      "b_only": 46,
+      "c_only": 393,
+      "mcnemar_p": 8.998272821137291e-70,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk16": {
+      "a": 0.292,
+      "b": 0.623,
+      "delta": -0.331,
+      "ci95": [
+        -0.365,
+        -0.298
+      ],
+      "b_only": 40,
+      "c_only": 371,
+      "mcnemar_p": 2.6121758803052344e-68,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk32": {
+      "a": 0.245,
+      "b": 0.597,
+      "delta": -0.352,
+      "ci95": [
+        -0.387,
+        -0.317
+      ],
+      "b_only": 47,
+      "c_only": 399,
+      "mcnemar_p": 1.2899738036582185e-70,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk64": {
+      "a": 0.165,
+      "b": 0.476,
+      "delta": -0.311,
+      "ci95": [
+        -0.347,
+        -0.276
+      ],
+      "b_only": 53,
+      "c_only": 364,
+      "mcnemar_p": 3.768745348850397e-58,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk1": {
+      "a": 0.386,
+      "b": 0.744,
+      "delta": -0.358,
+      "ci95": [
+        -0.39,
+        -0.327
+      ],
+      "b_only": 24,
+      "c_only": 382,
+      "mcnemar_p": 4.18493227077749e-84,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk2": {
+      "a": 0.397,
+      "b": 0.717,
+      "delta": -0.32,
+      "ci95": [
+        -0.353,
+        -0.288
+      ],
+      "b_only": 29,
+      "c_only": 349,
+      "mcnemar_p": 7.433553520578362e-71,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk4": {
+      "a": 0.379,
+      "b": 0.677,
+      "delta": -0.298,
+      "ci95": [
+        -0.33,
+        -0.266
+      ],
+      "b_only": 31,
+      "c_only": 329,
+      "mcnemar_p": 5.318075151732492e-64,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk8": {
+      "a": 0.373,
+      "b": 0.679,
+      "delta": -0.306,
+      "ci95": [
+        -0.34,
+        -0.271
+      ],
+      "b_only": 53,
+      "c_only": 359,
+      "mcnemar_p": 6.104664941387722e-57,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk16": {
+      "a": 0.296,
+      "b": 0.646,
+      "delta": -0.35,
+      "ci95": [
+        -0.383,
+        -0.315
+      ],
+      "b_only": 46,
+      "c_only": 396,
+      "mcnemar_p": 1.563737456619215e-70,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk32": {
+      "a": 0.243,
+      "b": 0.587,
+      "delta": -0.344,
+      "ci95": [
+        -0.379,
+        -0.309
+      ],
+      "b_only": 43,
+      "c_only": 387,
+      "mcnemar_p": 2.650479635809327e-70,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk64": {
+      "a": 0.165,
+      "b": 0.435,
+      "delta": -0.27,
+      "ci95": [
+        -0.303,
+        -0.236
+      ],
+      "b_only": 54,
+      "c_only": 324,
+      "mcnemar_p": 4.828288562323213e-48,
+      "n": 1000,
+      "lower_better": false
+    }
+  }
+}

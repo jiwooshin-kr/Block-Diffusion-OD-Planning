@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE32seen_dcbg_P3",
+  "num_paths": 1000,
+  "num_valid": 361,
+  "valid_rate": 0.361,
+  "num_invalid": 639,
+  "invalid_rate": 0.639,
+  "num_em": 70,
+  "em_score": 0.07,
+  "pc_score": 0.11427668195892869
+}

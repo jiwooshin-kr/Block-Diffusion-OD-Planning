@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE16seen_modelD_P3",
+  "num_paths": 1000,
+  "num_valid": 325,
+  "valid_rate": 0.325,
+  "num_invalid": 675,
+  "invalid_rate": 0.675,
+  "num_em": 78,
+  "em_score": 0.078,
+  "pc_score": 0.13654462596582165
+}

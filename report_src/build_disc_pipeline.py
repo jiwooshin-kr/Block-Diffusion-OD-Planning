@@ -1,7 +1,7 @@
 """Paper figure: the full discriminator pipeline (BDDiscriminator).
 Emits report_src/disc_pipeline_{en,ko}.html -> pdfs/DISC_PIPELINE{,_KO}.pdf
-Every architectural claim traces to models_seq/bd_disc.py, train_bd_disc.py,
-models_seq/bd_models.py::_denoise_block_mask_guided, disc_gen_eval.py.
+Every architectural claim traces to models_seq/bd_disc.py, tools/train/train_bd_disc.py,
+models_seq/bd_models.py::_denoise_block_mask_guided, tools/eval/disc_gen_eval.py.
 """
 
 W, H = 1200, 790
@@ -132,7 +132,7 @@ def build(L):
 
 EN = dict(
     title="Discriminator pipeline for importance-weight guidance in block diffusion",
-    src="models_seq/bd_disc.py · train_bd_disc.py · bd_models.py::_denoise_block_mask_guided · disc_gen_eval.py",
+    src="models_seq/bd_disc.py · tools/train/train_bd_disc.py · bd_models.py::_denoise_block_mask_guided · tools/eval/disc_gen_eval.py",
     pA="Example construction", pB="BDDiscriminator  D(x | A_scn)", pC="Objective and the two uses",
     a1t="Positives — exceptional",
     a1=["except_e shortest paths, 1% slice", "(first 1,000 rows held out for eval)"],

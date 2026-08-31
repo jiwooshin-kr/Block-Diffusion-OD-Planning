@@ -100,6 +100,18 @@ def _modulate(x, shift, scale):
     return x * (1.0 + scale) + shift
 
 
+def simplify_path(p):
+    out, pos = [], {}
+    for v in p:
+        if v in pos:
+            out = out[:pos[v] + 1]
+            pos = {u: i for i, u in enumerate(out)}
+        else:
+            pos[v] = len(out)
+            out.append(v)
+    return out
+
+
 # =====================================================================
 # Transformer denoiser
 # =====================================================================
@@ -673,6 +685,13 @@ class BlockDiffusion(nn.Module):
             else:
                 self.last_patch_lens.append(0)
             paths.append(p)
+        # Simplification (loop cut) is ON by default. Generation itself is left
+        # untouched -- this only rewrites the returned paths, so the sampling
+        # distribution is unchanged. arrival is preserved exactly and validity is
+        # non-decreasing, so the headline metrics are not laundered.
+        # Pass simplify=False to reproduce pre-2026-08-21 numbers.
+        if bool(kwargs.get("simplify", True)):
+            paths = [simplify_path(p) for p in paths]
         return paths
 
     def _init_block(self, b):
@@ -862,7 +881,9 @@ class BlockDiffusion(nn.Module):
                     self._denoise_block_mask_guided(
                         seq, origs, dests, w, disc, adj_scn, deg_ratio,
                         n_is, w_gamma, cand_temp, disc_micro_bs, ess_log,
-                        adj_prop=adj_prop, diag_log=diag_log, order=order)
+                        adj_prop=adj_prop, diag_log=diag_log, order=order,
+                        cand_mode=kwargs.get("cand_mode", "meanfield"),
+                        anc_correct=kwargs.get("anc_correct", True))
                 else:
                     self._denoise_block_graph_guided(
                         seq, origs, dests, w, disc, adj_scn, deg_ratio,
@@ -898,6 +919,10 @@ class BlockDiffusion(nn.Module):
             paths.append([t for t in seq[i, o:hi].tolist() if t < self.n_vertex])
             self.last_hits.append(False)
             self.last_patch_lens.append(0)
+        # Same as plan(): simplification ON by default, applied only to the
+        # returned paths (arrival preserved, validity non-decreasing).
+        if bool(kwargs.get("simplify", True)):
+            paths = [simplify_path(p) for p in paths]
         return paths
 
     def _disc_lengths(self, x, dests):
@@ -915,10 +940,67 @@ class BlockDiffusion(nn.Module):
                              torch.full_like(idx, s))
         return length.clamp(min=2)
 
+
+    def _ancestral_cand(self, seq, p_x0, masked, adj_scn, n_is, block, s):
+        """Left-to-right ANCESTRAL candidate blocks (contrast: the default
+        mean-field draw, which samples every block position independently from
+        its own marginal and therefore proposes internally illegal blocks).
+
+        Position j is drawn from the denoiser marginal restricted to the
+        scenario-legal successors of THIS candidate's own token at j-1, then
+        renormalised. Every proposed block is thus a legal walk, so no
+        candidate carries zero target mass on account of adjacency.
+
+        Returns
+          cand  (b, n_is, block)
+          log_a (b, n_is) = sum_j log alpha_j, the per-candidate log
+                normaliser of the proposal. Unlike the mean-field mask -- whose
+                alpha is a per-step constant shared by all candidates and
+                therefore cancels under self-normalisation -- alpha_j here
+                depends on the candidate's own history, so it does NOT cancel:
+                the importance weight must be multiplied by prod_j alpha_j,
+                i.e. log w = gamma * logit + log_a.
+        """
+        b = seq.shape[0]
+        nv = self.n_vertex
+        lo = s - block
+        dev = seq.device
+        cand = torch.empty(b, n_is, block, dtype=seq.dtype, device=dev)
+        log_a = torch.zeros(b, n_is, device=dev)
+        if lo >= 1:
+            prev = seq[:, lo - 1].unsqueeze(1).expand(b, n_is).contiguous()
+        else:
+            prev = torch.full((b, n_is), self.MASK, dtype=seq.dtype, device=dev)
+        cur_blk = seq[:, lo:s]
+        for j in range(block):
+            p_j = p_x0[:, j].unsqueeze(1).expand(b, n_is, -1).reshape(b * n_is, -1)
+            # a transition exists only from canvas position >= 2 (0=dst, 1=ori)
+            use = (prev < nv) & ((lo + j) >= 2)
+            if bool(use.any()):
+                mrow = torch.ones_like(p_j)
+                safe = torch.where(prev < nv, prev, torch.zeros_like(prev)).reshape(-1)
+                mrow[:, :nv] = adj_scn[safe]
+                mrow = torch.where(use.reshape(-1, 1), mrow, torch.ones_like(mrow))
+                pm = p_j * mrow
+                z = pm.sum(1, keepdim=True)
+                ok = z > 1e-9
+                p_j = torch.where(ok, pm / z.clamp(min=1e-9), p_j)
+                dlog = torch.where(ok, z, torch.ones_like(z)).log().view(b, n_is)
+            else:
+                dlog = torch.zeros(b, n_is, device=dev)
+            tok = torch.multinomial(p_j.clamp(min=1e-12), 1).squeeze(1).view(b, n_is)
+            keep = masked[:, j].unsqueeze(1)
+            tok = torch.where(keep, tok, cur_blk[:, j].unsqueeze(1).expand(b, n_is))
+            log_a = log_a + torch.where(keep, dlog, torch.zeros_like(dlog))
+            cand[:, :, j] = tok
+            prev = tok
+        return cand, log_a
+
     def _denoise_block_mask_guided(self, seq, origs, dests, w, disc, adj_scn,
                                    deg_ratio, n_is, w_gamma, cand_temp,
                                    micro_bs, ess_log, adj_prop=False,
-                                   diag_log=None, order="first_hit"):
+                                   diag_log=None, order="first_hit",
+                                   cand_mode="meanfield", anc_correct=True):
         """Guided reveal where the reveal-target x0-bar is the
         D/(1-D)-reweighted candidate average (Eqs. 3+5 of the guidance doc).
         order="first_hit": reveal a uniformly-chosen masked position per step;
@@ -992,12 +1074,19 @@ class BlockDiffusion(nn.Module):
                 seq[arange[active], pos[active]] = tok[active]
                 continue
 
-            # ---- mean-field candidates: (b, n, block) ----------------
-            cand = torch.multinomial(
-                p_cand.reshape(b * block, V), n_is, replacement=True
-            ).view(b, block, n_is).permute(0, 2, 1).contiguous()
-            cur = seq[:, -block:].unsqueeze(1).expand(b, n_is, block)
-            cand = torch.where(masked.unsqueeze(1), cand, cur)
+            # ---- candidate blocks: (b, n, block) ---------------------
+            log_a = None
+            if cand_mode == "ancestral" and adj_prop:
+                # legal-by-construction proposal; p_x0 (not the already-masked
+                # p_cand) so the normaliser is accounted for exactly once
+                cand, log_a = self._ancestral_cand(seq, p_x0, masked, adj_scn,
+                                                   n_is, block, s)
+            else:
+                cand = torch.multinomial(
+                    p_cand.reshape(b * block, V), n_is, replacement=True
+                ).view(b, block, n_is).permute(0, 2, 1).contiguous()
+                cur = seq[:, -block:].unsqueeze(1).expand(b, n_is, block)
+                cand = torch.where(masked.unsqueeze(1), cand, cur)
 
             # ---- disc scoring of [prefix || candidate block] ----------
             full = seq.unsqueeze(1).expand(b, n_is, s).clone()
@@ -1020,6 +1109,8 @@ class BlockDiffusion(nn.Module):
 
             # self-normalized weights (row-max shift for stability) + ESS
             g = w_gamma * dlogits
+            if log_a is not None and anc_correct:
+                g = g + log_a          # w = (D/(1-D))^gamma * prod_j alpha_j
             wgt = torch.exp(g - g.max(dim=1, keepdim=True).values)     # (b, n)
             if ess_log is not None:
                 ess = (wgt.sum(1) ** 2 / (wgt ** 2).sum(1).clamp(min=1e-12))

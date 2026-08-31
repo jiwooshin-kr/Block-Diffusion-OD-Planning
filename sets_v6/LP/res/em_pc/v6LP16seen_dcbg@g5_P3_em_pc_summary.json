@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP16seen_dcbg@g5_P3",
+  "num_paths": 1000,
+  "num_valid": 834,
+  "valid_rate": 0.834,
+  "num_invalid": 166,
+  "invalid_rate": 0.166,
+  "num_em": 121,
+  "em_score": 0.121,
+  "pc_score": 0.2146370917816259
+}

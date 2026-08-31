@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP64seen_dcbg_raw",
+  "num_paths": 1000,
+  "num_valid": 403,
+  "valid_rate": 0.403,
+  "num_invalid": 597,
+  "invalid_rate": 0.597,
+  "num_em": 52,
+  "em_score": 0.052,
+  "pc_score": 0.10290349328043266
+}

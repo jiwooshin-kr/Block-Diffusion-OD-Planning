@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE2seen_base_P3",
+  "num_paths": 1000,
+  "num_valid": 230,
+  "valid_rate": 0.23,
+  "num_invalid": 770,
+  "invalid_rate": 0.77,
+  "num_em": 59,
+  "em_score": 0.059,
+  "pc_score": 0.08840480186480187
+}

@@ -1,0 +1,204 @@
+{
+  "arm_a": "modelD",
+  "arm_b": "dcbg@g3",
+  "variant": "raw",
+  "metric": "valid_and_arrival",
+  "rows": {
+    "seen_blk1": {
+      "a": 0.427,
+      "b": 0.606,
+      "delta": -0.179,
+      "ci95": [
+        -0.212,
+        -0.146
+      ],
+      "b_only": 65,
+      "c_only": 244,
+      "mcnemar_p": 1.5682507807574673e-25,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk2": {
+      "a": 0.416,
+      "b": 0.586,
+      "delta": -0.17,
+      "ci95": [
+        -0.203,
+        -0.135
+      ],
+      "b_only": 84,
+      "c_only": 254,
+      "mcnemar_p": 5.392560032614356e-21,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk4": {
+      "a": 0.402,
+      "b": 0.611,
+      "delta": -0.209,
+      "ci95": [
+        -0.242,
+        -0.175
+      ],
+      "b_only": 59,
+      "c_only": 268,
+      "mcnemar_p": 5.832235594998548e-33,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk8": {
+      "a": 0.359,
+      "b": 0.579,
+      "delta": -0.22,
+      "ci95": [
+        -0.254,
+        -0.186
+      ],
+      "b_only": 66,
+      "c_only": 286,
+      "mcnemar_p": 9.106270328465425e-34,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk16": {
+      "a": 0.259,
+      "b": 0.497,
+      "delta": -0.238,
+      "ci95": [
+        -0.274,
+        -0.203
+      ],
+      "b_only": 69,
+      "c_only": 307,
+      "mcnemar_p": 6.120676919211773e-37,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk32": {
+      "a": 0.227,
+      "b": 0.518,
+      "delta": -0.291,
+      "ci95": [
+        -0.325,
+        -0.258
+      ],
+      "b_only": 44,
+      "c_only": 335,
+      "mcnemar_p": 1.509545400696227e-56,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk64": {
+      "a": 0.23,
+      "b": 0.458,
+      "delta": -0.228,
+      "ci95": [
+        -0.262,
+        -0.194
+      ],
+      "b_only": 62,
+      "c_only": 290,
+      "mcnemar_p": 2.2254210536259642e-36,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk1": {
+      "a": 0.423,
+      "b": 0.564,
+      "delta": -0.141,
+      "ci95": [
+        -0.173,
+        -0.108
+      ],
+      "b_only": 79,
+      "c_only": 220,
+      "mcnemar_p": 1.518170845333334e-16,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk2": {
+      "a": 0.401,
+      "b": 0.567,
+      "delta": -0.166,
+      "ci95": [
+        -0.2,
+        -0.133
+      ],
+      "b_only": 77,
+      "c_only": 243,
+      "mcnemar_p": 3.446590610204293e-21,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk4": {
+      "a": 0.427,
+      "b": 0.601,
+      "delta": -0.174,
+      "ci95": [
+        -0.206,
+        -0.142
+      ],
+      "b_only": 68,
+      "c_only": 242,
+      "mcnemar_p": 4.888367408093245e-24,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk8": {
+      "a": 0.384,
+      "b": 0.594,
+      "delta": -0.21,
+      "ci95": [
+        -0.244,
+        -0.176
+      ],
+      "b_only": 66,
+      "c_only": 276,
+      "mcnemar_p": 1.1466569026161677e-31,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk16": {
+      "a": 0.252,
+      "b": 0.484,
+      "delta": -0.232,
+      "ci95": [
+        -0.265,
+        -0.198
+      ],
+      "b_only": 65,
+      "c_only": 297,
+      "mcnemar_p": 1.498753035780219e-36,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk32": {
+      "a": 0.225,
+      "b": 0.522,
+      "delta": -0.297,
+      "ci95": [
+        -0.331,
+        -0.262
+      ],
+      "b_only": 45,
+      "c_only": 342,
+      "mcnemar_p": 1.1918881008232756e-57,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk64": {
+      "a": 0.228,
+      "b": 0.444,
+      "delta": -0.216,
+      "ci95": [
+        -0.251,
+        -0.182
+      ],
+      "b_only": 64,
+      "c_only": 280,
+      "mcnemar_p": 2.379666426832021e-33,
+      "n": 1000,
+      "lower_better": false
+    }
+  }
+}

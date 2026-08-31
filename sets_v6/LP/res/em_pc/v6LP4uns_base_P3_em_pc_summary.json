@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP4uns_base_P3",
+  "num_paths": 1000,
+  "num_valid": 249,
+  "valid_rate": 0.249,
+  "num_invalid": 751,
+  "invalid_rate": 0.751,
+  "num_em": 57,
+  "em_score": 0.057,
+  "pc_score": 0.10699795708677287
+}

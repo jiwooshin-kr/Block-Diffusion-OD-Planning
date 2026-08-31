@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE32seen_adjonly_raw",
+  "num_paths": 1000,
+  "num_valid": 995,
+  "valid_rate": 0.995,
+  "num_invalid": 5,
+  "invalid_rate": 0.005,
+  "num_em": 91,
+  "em_score": 0.091,
+  "pc_score": 0.18360017532275572
+}

@@ -1,0 +1,34 @@
+[
+  {
+    "idx": 364,
+    "start": null,
+    "end": null,
+    "gen_path": [
+      1307
+    ],
+    "gen_len": 1,
+    "reason": "path_length_less_than_2",
+    "invalid_nodes": [
+      1307
+    ],
+    "invalid_edges": [],
+    "shortest_len": null,
+    "shortest_lengths_same_od": []
+  },
+  {
+    "idx": 577,
+    "start": null,
+    "end": null,
+    "gen_path": [
+      938
+    ],
+    "gen_len": 1,
+    "reason": "path_length_less_than_2",
+    "invalid_nodes": [
+      938
+    ],
+    "invalid_edges": [],
+    "shortest_len": null,
+    "shortest_lengths_same_od": []
+  }
+]

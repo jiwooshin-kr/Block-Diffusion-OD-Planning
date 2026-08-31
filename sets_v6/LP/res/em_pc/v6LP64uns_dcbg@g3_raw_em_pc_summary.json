@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP64uns_dcbg@g3_raw",
+  "num_paths": 1000,
+  "num_valid": 754,
+  "valid_rate": 0.754,
+  "num_invalid": 246,
+  "invalid_rate": 0.246,
+  "num_em": 76,
+  "em_score": 0.076,
+  "pc_score": 0.15128589130748535
+}

@@ -1,0 +1,196 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<title>Porto v6 — LE vs LP: choice set 생성 방식과 가이던스 효과</title><style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 10.5px; line-height: 1.55; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.4px; }
+  th, td { border: 1px solid #bbb; padding: 3.5px 6px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  td.num, th.num { text-align: right; }
+  .status-box { background: #fff8e6; border: 1.5px solid #e6c260; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .best { font-weight: 700; }
+  .small { font-size: 8.9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .muted { color: #666; font-style: italic; }
+
+tr.iw td { background: #f4f8fb; }
+td.win { color: #0a6; font-weight: 600; }
+td.lose { color: #c33; font-weight: 600; }
+td.ctr, th.ctr { text-align: center; }
+</style></head><body>
+<h1>LE vs LP &mdash; choice set 생성 방식이 가이던스 효과를 바꾸는가</h1>
+
+<h2>1. 가설</h2>
+<p>v6 의 두 데이터셋은 <b>예외 시나리오가 다른 것이 아니라 choice set 생성 방식이
+다르다</b>. OD 쌍마다 choice set 을 먼저 만들고 그 중 하나를 참조 경로로 뽑는데,
+만드는 방법이 이렇게 갈린다.</p>
+<table>
+<tr><th>데이터셋</th><th>choice set 생성</th><th>구성원의 성질</th></tr>
+<tr><td><b>LE</b> (link elimination)</td>
+ <td>edge 를 <b>삭제</b>하며 최단경로를 반복 수집</td>
+ <td>모든 구성원이 <b>어떤 부분그래프에서의 최단경로</b></td></tr>
+<tr><td><b>LP</b> (link penalization)</td>
+ <td>edge 비용에 <b>벌점</b>을 주며 최단경로를 반복 수집. edge 는 삭제되지 않는다</td>
+ <td>수정된 비용 아래의 최단경로 &mdash; 홉 수로는 어느 부분그래프에서도 최단이 아니다</td></tr>
+</table>
+<p>한편 <b>except_e 시나리오는 edge 를 삭제</b>한다. 그러면 LE 쪽에는 구조적 혼입이
+생긴다 &mdash; <b>LE 의 학습 분포에는 이미 &ldquo;edge 가 빠진 그래프의 최단경로&rdquo;가
+가득하다.</b> 시나리오가 edge 를 지워 만든 경로가 LE 의 평범한 데이터와 구별이 잘 안
+된다는 뜻이고, 판별자의 positive 클래스가 그만큼 덜 특징적이 된다. LP 에는 삭제를
+닮은 것이 학습 분포에 없으므로 시나리오 신호가 더 깨끗해야 하고, <b>따라서 가이던스가
+LP 에서 더 잘 들어야 한다.</b> 이것이 검증 대상이다.</p>
+<p class="small">간접적인 논거임을 분명히 해 둔다 &mdash; LE 의 choice set 삭제와
+시나리오 삭제는 같은 연산이지만 같은 edge 집합이 아니다. 그래서 예측을 세 갈래로
+쪼개 각각 측정했다.</p>
+
+<h2>2. 전제 확인 &mdash; 시나리오 교란은 두 데이터셋에서 동일하다</h2>
+<p>먼저 확인해야 할 것은 &ldquo;LE 와 LP 가 시나리오 자체에서 다르지 않다&rdquo;는 점이다.
+다르면 이후 비교가 전부 오염된다. except_e 그래프를 normal 과 비교했다
+(<span class="mono">10</span> 개 시나리오 평균).</p>
+<table>
+<tr><th>항목</th><th class="num">LE</th><th class="num">LP</th>
+ <th class="num">차</th><th class="ctr">가설 예상</th><th>비고</th></tr>
+<tr><td>normal edge 수</td><td class="num">3996</td><td class="num">3996</td><td class="num">0</td><td class="ctr">&#10004;</td><td class="small"></td></tr>
+<tr><td>시나리오 edge 수</td><td class="num">3798.0</td><td class="num">3798.1</td><td class="num">-0.1</td><td class="ctr">&#10004;</td><td class="small"></td></tr>
+<tr><td>삭제된 edge</td><td class="num">198.0</td><td class="num">197.9</td><td class="num">0.1</td><td class="ctr">&#10004;</td><td class="small"></td></tr>
+<tr><td>추가된 edge</td><td class="num">0.0</td><td class="num">0.0</td><td class="num">0.0</td><td class="ctr">&#10004;</td><td class="small"></td></tr>
+<tr><td>삭제 비율</td><td class="num">0.0495</td><td class="num">0.0495</td><td class="num">0.0000</td><td class="ctr">&#10004;</td><td class="small"></td></tr>
+<tr><td>except_0 &cap; except_1 삭제 겹침</td><td class="num">12</td><td class="num">8</td><td class="num">4</td><td class="ctr"></td><td class="small">198개 중. 시나리오는 서로 독립에 가깝다</td></tr>
+</table>
+<p><b>동일하다.</b> 둘 다 3996 개 중 <b>198 개(4.95%)</b>를 삭제하고 추가는 0 이다.
+그러므로 &ldquo;LE 는 edge 를 지우는 데이터&rdquo;라는 말은 <b>시나리오</b>에 대해서는 LP 에도
+똑같이 적용된다. 가설이 성립할 자리는 시나리오가 아니라 <b>choice set 쪽뿐</b>이며,
+이 표는 그 점을 확정한다.</p>
+<p class="small">부수 확인 &mdash; 참조 경로가 자기 시나리오 그래프에서 합법인가?
+LE 0/1000, LP
+0/1000 가 불법이고 불법 edge 는
+0/27310 와
+0/28043 다. 즉 <b>둘 다 0</b>.
+&ldquo;LP 는 벌점만 줬으니 참조 경로가 벌점 링크를 계속 쓴다&rdquo;는 가능성은 배제된다 &mdash;
+벌점은 choice set 을 만들 때만 쓰이고, 뽑힌 경로는 시나리오 그래프에서 온전히 합법이다.</p>
+
+<h2>3. 예측 1 (확인됨) &mdash; LE 참조 경로가 최단경로에 더 가깝다</h2>
+<p>가설의 가장 직접적인 결과다. LE 구성원이 <b>부분그래프의 최단경로</b>라면, 뽑힌 참조
+경로도 최단경로에서 덜 벗어나야 한다. LP 는 벌점을 피해 우회하므로 더 벗어나야 한다.
+BFS 홉 최소 경로를 기준으로 재면 <b>네 지표가 모두 같은 방향</b>을 가리킨다.</p>
+<table>
+<tr><th>항목</th><th class="num">LE</th><th class="num">LP</th>
+ <th class="num">차</th><th class="ctr">가설 예상</th><th>비고</th></tr>
+<tr><td>참조 경로 길이 (홉)</td><td class="num">28.31</td><td class="num">29.04</td><td class="num">-0.73</td><td class="ctr">&#10004;</td><td class="small">BFS 는 두 데이터셋에서 23.94 홉으로 동일(OD 쌍이 같다)</td></tr>
+<tr><td>BFS 대비 초과 홉</td><td class="num">4.37</td><td class="num">5.11</td><td class="num">-0.73</td><td class="ctr">&#10004;</td><td class="small"></td></tr>
+<tr><td>우회 비율 |ref|/|BFS|</td><td class="num">1.197</td><td class="num">1.222</td><td class="num">-0.026</td><td class="ctr">&#10004;</td><td class="small"></td></tr>
+<tr><td>BFS 와의 DTW (m)</td><td class="num">4342</td><td class="num">5207</td><td class="num">-865</td><td class="ctr">&#10004;</td><td class="small">기하 이탈. 작을수록 최단경로에 가깝다</td></tr>
+<tr><td>BFS 와의 LCS</td><td class="num">12.16</td><td class="num">11.16</td><td class="num">1.00</td><td class="ctr">&#10004;</td><td class="small">최단경로와 공유하는 노드 수. 클수록 가깝다</td></tr>
+<tr><td>BFS 와 길이가 같은 비율</td><td class="num">0.092</td><td class="num">0.093</td><td class="num">-0.001</td><td class="ctr"></td><td class="small">이 지표만 차이가 없다 &mdash; 아래 주석 참조</td></tr>
+<tr><td>BFS 보다 짧은 비율</td><td class="num">0.000</td><td class="num">0.000</td><td class="num">0.000</td><td class="ctr"></td><td class="small">정의상 0. BFS 가 홉 최소이므로</td></tr>
+</table>
+<p><b>예측대로다.</b> LE 참조 경로는 평균
+4.37 홉만 우회하는데 LP 는
+5.11 홉 우회한다. BFS 와의 DTW 도 LE
+4342 m 대 LP 5207 m,
+LCS 도 LE 12.16 대 LP 11.16 로
+LE 가 일관되게 더 &ldquo;최단경로 같다&rdquo;. <b>choice set 생성 방식이 참조 경로의 성격에
+실제로 각인된다</b>는 뜻이고, 가설의 전제가 데이터에서 확인된 것이다.</p>
+<p class="small">&ldquo;BFS 와 길이가 같은 비율&rdquo;만 차이가 없다(9.2% 대 9.3%). 당연하다 &mdash;
+LE 구성원이 최단인 것은 <b>choice set 을 만들 때 쓴 부분그래프</b>에서이고, 우리가 비교하는
+BFS 는 <b>except_0</b> 그래프에서의 최단경로다. 두 부분그래프가 다르므로 정확히 일치할
+이유가 없다. 평균적으로 더 가까울 뿐이며, 위의 연속 지표들이 바로 그 &ldquo;평균적으로&rdquo;를
+잡아낸다.</p>
+
+<h2>4. 예측 2 (기각됨) &mdash; 판별자 학습 난이도는 차이가 없다</h2>
+<p>가설이 맞다면 LE 의 판별자 학습이 더 어려워야 한다. positive(except_0 경로)가
+negative(무조건 모델 pool)와 덜 구별되기 때문이다. e0 판별자의 학습 로그에서
+마지막 스텝의 정확도를 긁어 비교했다.</p>
+<table>
+<tr><th rowspan=2>blk</th><th class="num" colspan=3>LE</th>
+ <th class="num" colspan=3>LP</th></tr>
+<tr><th class="num">train</th><th class="num">val</th><th class="num">logit_std</th>
+ <th class="num">train</th><th class="num">val</th><th class="num">logit_std</th></tr>
+<tr><td>1</td><td class="num">0.812</td><td class="num">0.723</td><td class="num">1.900</td><td class="num">0.830</td><td class="num">0.703</td><td class="num">2.110</td></tr><tr><td>2</td><td class="num">0.811</td><td class="num">0.707</td><td class="num">1.930</td><td class="num">0.828</td><td class="num">0.695</td><td class="num">1.870</td></tr><tr><td>4</td><td class="num">0.839</td><td class="num">0.707</td><td class="num">2.000</td><td class="num">0.857</td><td class="num">0.703</td><td class="num">1.900</td></tr><tr><td>8</td><td class="num">0.876</td><td class="num">0.727</td><td class="num">2.010</td><td class="num">0.871</td><td class="num">0.695</td><td class="num">2.070</td></tr><tr><td>16</td><td class="num">0.898</td><td class="num">0.715</td><td class="num">2.110</td><td class="num">0.906</td><td class="num">0.719</td><td class="num">2.250</td></tr><tr><td>32</td><td class="num">0.896</td><td class="num">0.691</td><td class="num">2.240</td><td class="num">0.900</td><td class="num">0.742</td><td class="num">2.140</td></tr><tr><td>64</td><td class="num">0.899</td><td class="num">0.719</td><td class="num">2.250</td><td class="num">0.918</td><td class="num">0.719</td><td class="num">2.170</td></tr>
+</table>
+<p><b>차이가 없다.</b> val 정확도 평균이 LE <b>0.713</b>
+(0.691&ndash;0.727), LP <b>0.711</b>
+(0.695&ndash;0.742) 로 사실상 같고 블록별 대소도 뒤섞인다.
+logit_std 도 1.87&ndash;2.25 로 겹친다.</p>
+<p>그러므로 가설이 맞다 해도 그 효과는 <b>학습 과제의 난이도로는 나타나지 않는다.</b>
+이건 이상한 일이 아니다 &mdash; 학습/검증 과제는 &ldquo;경로 하나를 보고 시나리오 데이터인지
+판정&rdquo;인데, 배포 과제는 &ldquo;같은 스텝에 같은 <span class="mono">p&theta;</span> 가 낸
+후보들의 순위 매기기&rdquo;로 훨씬 어렵고 다른 능력을 요구한다. 효과가 있다면 후자에서
+보일 것이다.</p>
+
+<h2>5. 예측 3 (부분 확인) &mdash; 가이던스 기여</h2>
+<p>배포 과제에서의 판별자 기여를 직접 재려면 <b>마스킹만 쓴 arm 을 기준선</b>으로 삼아야
+한다. <span class="mono">Adj+IW &minus; Adj-only</span> 가 곧 재가중이 순수하게 보탠
+몫이다(v&amp;a, rawL, seen). n_is 스윕 전체를 함께 실어 <b>n 에 의존하지 않는 값인지</b>도
+같이 본다.</p>
+<table>
+<tr><th rowspan=2>blk</th><th class="num" colspan=7>LE</th><th class="num" colspan=7>LP</th></tr><tr><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">평균</th><th class="num">추세</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">평균</th><th class="num">추세</th></tr>
+<tr><td>1</td><td class="num ">+0.000</td><td class="num win">+0.013</td><td class="num win">+0.004</td><td class="num win">+0.009</td><td class="num win">+0.008</td><td class="num"><b>+0.007</b></td><td class="num">&sim;</td><td class="num lose">-0.009</td><td class="num lose">-0.008</td><td class="num lose">-0.004</td><td class="num ">+0.000</td><td class="num win">+0.001</td><td class="num"><b>-0.004</b></td><td class="num">&uarr;</td></tr><tr><td>2</td><td class="num win">+0.022</td><td class="num win">+0.022</td><td class="num win">+0.021</td><td class="num win">+0.020</td><td class="num win">+0.025</td><td class="num"><b>+0.022</b></td><td class="num">&sim;</td><td class="num win">+0.033</td><td class="num win">+0.019</td><td class="num win">+0.025</td><td class="num win">+0.029</td><td class="num win">+0.036</td><td class="num"><b>+0.028</b></td><td class="num">&nearr;</td></tr><tr><td>4</td><td class="num win">+0.023</td><td class="num win">+0.024</td><td class="num win">+0.030</td><td class="num win">+0.037</td><td class="num win">+0.045</td><td class="num"><b>+0.032</b></td><td class="num">&uarr;</td><td class="num win">+0.014</td><td class="num win">+0.022</td><td class="num win">+0.023</td><td class="num win">+0.031</td><td class="num win">+0.031</td><td class="num"><b>+0.024</b></td><td class="num">&uarr;</td></tr><tr><td>8</td><td class="num win">+0.036</td><td class="num win">+0.050</td><td class="num win">+0.039</td><td class="num win">+0.039</td><td class="num win">+0.028</td><td class="num"><b>+0.038</b></td><td class="num">&sim;</td><td class="num win">+0.023</td><td class="num win">+0.027</td><td class="num win">+0.021</td><td class="num win">+0.030</td><td class="num win">+0.018</td><td class="num"><b>+0.024</b></td><td class="num">&sim;</td></tr><tr><td>16</td><td class="num win">+0.022</td><td class="num win">+0.020</td><td class="num win">+0.019</td><td class="num win">+0.015</td><td class="num win">+0.012</td><td class="num"><b>+0.018</b></td><td class="num">&darr;</td><td class="num lose">-0.009</td><td class="num lose">-0.004</td><td class="num win">+0.007</td><td class="num win">+0.004</td><td class="num lose">-0.014</td><td class="num"><b>-0.003</b></td><td class="num">&sim;</td></tr><tr><td>32</td><td class="num win">+0.014</td><td class="num win">+0.008</td><td class="num win">+0.026</td><td class="num lose">-0.013</td><td class="num win">+0.033</td><td class="num"><b>+0.014</b></td><td class="num">&sim;</td><td class="num win">+0.035</td><td class="num win">+0.026</td><td class="num win">+0.038</td><td class="num win">+0.026</td><td class="num win">+0.036</td><td class="num"><b>+0.032</b></td><td class="num">&sim;</td></tr><tr><td>64</td><td class="num win">+0.004</td><td class="num win">+0.004</td><td class="num win">+0.005</td><td class="num win">+0.014</td><td class="num win">+0.007</td><td class="num"><b>+0.007</b></td><td class="num">&sim;</td><td class="num win">+0.024</td><td class="num win">+0.034</td><td class="num win">+0.046</td><td class="num win">+0.045</td><td class="num win">+0.050</td><td class="num"><b>+0.040</b></td><td class="num">&nearr;</td></tr>
+</table>
+<p><b>혼재한다. 가설이 예측하는 방향(LP &gt; LE)은 7개 블록 중 <b>3개</b>에서만 맞고, 4개에서는 <b>반대</b>다.</b></p>
+<ul>
+<li><b>blk1</b>: LE +0.007 / LP -0.004 &mdash; <b>반대 방향</b> (차 -0.011) &mdash; 둘 다 0 에 가깝다, 마스킹만으로 포화</li>
+<li><b>blk2</b>: LE +0.022 / LP +0.028 &mdash; <b>가설 방향</b> (차 +0.006) &mdash; 성능 <b>운용점</b></li>
+<li><b>blk4</b>: LE +0.032 / LP +0.024 &mdash; <b>반대 방향</b> (차 -0.008)</li>
+<li><b>blk8</b>: LE +0.038 / LP +0.024 &mdash; <b>반대 방향</b> (차 -0.015)</li>
+<li><b>blk16</b>: LE +0.018 / LP -0.003 &mdash; <b>반대 방향</b> (차 -0.021)</li>
+<li><b>blk32</b>: LE +0.014 / LP +0.032 &mdash; <b>가설 방향</b> (차 +0.019)</li>
+<li><b>blk64</b>: LE +0.007 / LP +0.040 &mdash; <b>가설 방향</b> (차 +0.033)</li>
+</ul>
+<p>즉 <b>블록 크기가 데이터셋보다 큰 변수</b>다. 그리고 그 의존이 무작위가 아니라
+<b>블록 크기에 따라 부호가 뒤집힌다</b>: 작은&middot;중간 블록에서는 LE 가, 큰 블록에서는
+LP 가 앞선다. 가설은 데이터셋 전체에 걸친 우열을 예측했으므로 이 구조는 가설로 설명되지
+않는다. 게다가 <b>운용점은 blk2</b>(v&amp;a 0.79&ndash;0.80, 큰 블록은 0.44&ndash;0.53)이고
+거기서의 차이는 0.006 로 v&amp;a 표본오차 0.013 수준이다.</p>
+<p class="small">후보 다양성(마스킹 ON, 고유 후보 수)을 나란히 두면 blk64 의 차이가
+왜 그쪽에서 나는지 보인다 &mdash; 후보가 많아지는 구간에서만 재가중이 쓸 재료를 갖는다.</p>
+<table>
+<tr><th rowspan=2>blk</th><th class="num" colspan=5>LE</th><th class="num" colspan=5>LP</th></tr>
+<tr><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th></tr>
+<tr><td>1</td><td class="num">1.6</td><td class="num">2.0</td><td class="num">2.2</td><td class="num">2.6</td><td class="num">2.9</td><td class="num">1.6</td><td class="num">2.0</td><td class="num">2.2</td><td class="num">2.7</td><td class="num">2.9</td></tr><tr><td>2</td><td class="num">1.8</td><td class="num">2.4</td><td class="num">2.9</td><td class="num">3.6</td><td class="num">4.2</td><td class="num">1.9</td><td class="num">2.7</td><td class="num">3.2</td><td class="num">4.1</td><td class="num">4.8</td></tr><tr><td>4</td><td class="num">1.7</td><td class="num">2.4</td><td class="num">2.9</td><td class="num">3.7</td><td class="num">4.4</td><td class="num">1.8</td><td class="num">2.7</td><td class="num">3.2</td><td class="num">4.2</td><td class="num">5.0</td></tr><tr><td>8</td><td class="num">2.4</td><td class="num">4.5</td><td class="num">6.3</td><td class="num">11.7</td><td class="num">15.8</td><td class="num">2.8</td><td class="num">5.3</td><td class="num">7.3</td><td class="num">11.3</td><td class="num">14.8</td></tr><tr><td>16</td><td class="num">3.6</td><td class="num">8.3</td><td class="num">12.0</td><td class="num">24.0</td><td class="num">30.2</td><td class="num">4.0</td><td class="num">8.8</td><td class="num">13.6</td><td class="num">22.6</td><td class="num">30.3</td></tr><tr><td>32</td><td class="num">4.0</td><td class="num">10.0</td><td class="num">21.5</td><td class="num">28.1</td><td class="num">58.9</td><td class="num">5.3</td><td class="num">10.6</td><td class="num">16.4</td><td class="num">31.3</td><td class="num">44.8</td></tr><tr><td>64</td><td class="num">5.1</td><td class="num">13.3</td><td class="num">21.5</td><td class="num">40.3</td><td class="num">59.8</td><td class="num">3.4</td><td class="num">8.2</td><td class="num">13.0</td><td class="num">24.8</td><td class="num">35.5</td></tr>
+</table>
+
+<h2>6. 결론</h2>
+<p>가설은 <b>메커니즘으로는 실재하고, 결과로는 약하다.</b></p>
+<ul>
+<li><b>실재한다:</b> choice set 생성 방식이 참조 경로에 각인된다는 것이 네 지표에서
+ 일관되게 확인된다. LE 참조 경로는 최단경로에 더 가깝고(초과 홉
+ 4.37 대 5.11),
+ 이는 LE 가 삭제 기반이라는 정의의 직접적 귀결이다.</li>
+<li><b>약하다:</b> 그 각인이 판별자 학습 난이도로는 전혀 나타나지 않고
+ (val acc 0.713 대 0.711), 가이던스 기여로도 <b>블록 크기에 따라 부호가
+ 뒤집힌다</b>(작은&middot;중간 블록 LE 우세 4개 / 큰 블록 LP 우세 3개). 가설은
+ 데이터셋 전체의 우열을 예측하므로 이 구조를 설명하지 못한다. 운용점 blk2 에서의 차이는
+ 0.006 로 표본오차 안이다.</li>
+<li><b>따라서 논문에서 쓸 수 있는 형태는</b> &ldquo;LP 에서 가이던스가 더 잘 듣는다&rdquo;가
+ 아니라, <b>&ldquo;두 choice-set 생성 방식 모두에서 같은 결론이 재현된다&rdquo;</b>는 강건성
+ 진술이다. 실제로 blk2 에서 Adj+IW 가 최선인 것, 마스킹이 기여의 대부분을 설명하는 것,
+ 그리고 <b>운용 블록에서 n_is 가 평평한 것</b>이 LE/LP 양쪽에서 동일하게 나타난다.
+ (단 &ldquo;n_is 에 평평&rdquo;은 <b>전 블록에 걸친 진술이 아니다</b> &mdash; LE blk4 와
+ LP blk64 에서는 기여가 n 에 따라 단조 증가한다. n_is 스윕 보고서의 해당 절 참조.)</li>
+</ul>
+<p class="small"><b>제대로 검정하려면.</b> 지금 비교는 데이터셋 2 개 &times; 블록 7 개의
+관측치라 블록 효과와 데이터셋 효과가 분리되지 않는다. 가설을 정면으로 재려면 LE 의
+choice set 삭제 edge 집합과 except_e 삭제 집합의 <b>겹침을 통제</b>해야 한다 &mdash;
+겹침이 큰 OD 쌍과 작은 OD 쌍으로 나눠 가이던스 기여를 비교하면, 같은 데이터셋 안에서
+가설을 직접 검정할 수 있다. 그 정보는 상류
+<span class="mono">porto_openstreetmap/path_data/v6</span> 의 choice set 생성 산출물에
+있어야 한다.</p>
+
+<hr>
+<p class="small"><b>출처.</b> 데이터셋 사실
+<span class="mono">tools/diag/le_vs_lp_facts.py</span> &rarr;
+<span class="mono">sets_v6/le_vs_lp_facts.json</span> &middot;
+최단경로 기준선 <span class="mono">tools/eval/shortest_baseline.py</span> &middot;
+가이던스 기여 <span class="mono">scripts/run_v6_nis.sh</span> 의 rawL 표 &middot;
+후보 다양성 <span class="mono">tools/diag/diag_proposal_diversity.py</span> &middot;
+판별자 정확도는 <span class="mono">sets_v6/{LE,LP}/log/disc_e0_blk*.log</span> 의
+마지막 스텝. 평가는 두 데이터셋 모두 동일한 1,000 OD 쌍(SPLIT_SEED 777),
+<span class="mono">order=l2r</span>, <span class="mono">w_gamma=1.0</span>.</p>
+</body></html>

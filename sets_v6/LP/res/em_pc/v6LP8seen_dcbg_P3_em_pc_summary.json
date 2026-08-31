@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP8seen_dcbg_P3",
+  "num_paths": 1000,
+  "num_valid": 396,
+  "valid_rate": 0.396,
+  "num_invalid": 604,
+  "invalid_rate": 0.604,
+  "num_em": 88,
+  "em_score": 0.088,
+  "pc_score": 0.15158694636683767
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "idx": 569,
+    "start": null,
+    "end": null,
+    "gen_path": [
+      414
+    ],
+    "gen_len": 1,
+    "reason": "path_length_less_than_2",
+    "invalid_nodes": [
+      414
+    ],
+    "invalid_edges": [],
+    "shortest_len": null,
+    "shortest_lengths_same_od": []
+  }
+]

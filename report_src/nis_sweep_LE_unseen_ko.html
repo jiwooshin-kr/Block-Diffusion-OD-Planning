@@ -1,0 +1,648 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<title>Porto v6 LE — importance sample 개수 n_is 스윕</title><style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 10.5px; line-height: 1.55; color: #1a1a1a; margin: 0; }
+  h1 { font-size: 18px; border-bottom: 3px solid #1a1a1a; padding-bottom: 7px; margin: 0 0 12px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 3px; border-bottom: 1.5px solid #888; }
+  h3 { font-size: 11.5px; margin: 14px 0 5px; }
+  p { margin: 6px 0; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.4px; }
+  th, td { border: 1px solid #bbb; padding: 3.5px 6px; text-align: left; vertical-align: top; }
+  th { background: #ececec; font-weight: 700; }
+  td.num, th.num { text-align: right; }
+  .status-box { background: #fff8e6; border: 1.5px solid #e6c260; border-radius: 6px; padding: 9px 12px; margin: 10px 0; }
+  .best { font-weight: 700; }
+  .small { font-size: 8.9px; color: #555; }
+  ul { margin: 5px 0 5px 2px; padding-left: 16px; }
+  li { margin: 3px 0; }
+  .muted { color: #666; font-style: italic; }
+
+tr.iw td { background: #f4f8fb; }
+tr.invar td { background: #f7f7f7; color: #666; }
+tr.ref td { background: #f2f2f0; color: #555; font-style: italic; }
+b.bad { color: #c33; }
+</style></head><body>
+<h1>Porto v6 LE &mdash; importance sample 개수 <span class="mono">n_is</span> 스윕</h1>
+
+<h2>1. 무엇을 왜 재는가</h2>
+<p>IW 가이던스는 매 reveal 마다 mean-field proposal 에서 <span class="mono">n_is</span> 개의
+후보 블록을 뽑고, 판별자 가중치 <span class="mono">(D/(1&minus;D))<sup>&gamma;</sup></span>
+로 재가중한 뒤 위치 하나를 공개한다. <span class="mono">n_is</span> 는
+<b>연산량을 그대로 결정하는 유일한 하이퍼파라미터</b>다 &mdash; 판별자 forward 가
+<span class="mono">batch &times; n_is</span> 회 돈다.</p>
+<p>이 스윕을 돌린 이유는 <b>사전 진단이 평평함을 예측했기</b> 때문이다.
+<span class="mono">tools/diag/diag_proposal_diversity.py</span> 로 재 보니, adjacency
+마스킹을 켠 상태에서 <span class="mono">n_is=100</span> 개를 뽑아도 <b>서로 다른</b> 후보는
+blk&le;4 에서 <b>2.6&ndash;3.9 개</b>뿐이었다. 시나리오 그래프의 out-degree 가 평균 2.74 라
+reveal 위치의 합법 후속이 애초에 3 개 정도이기 때문이다. 그렇다면 지표는
+<span class="mono">n_is</span> 에 <b>평평해야</b> 하고, 그건 곧 가이던스를 훨씬 싸게
+&mdash; 나아가 <b>전수 열거</b>로 &mdash; 바꿀 수 있다는 뜻이다.
+평평함 자체가 결과다.</p>
+<table>
+<tr><th>축</th><th>값</th><th>비고</th></tr>
+<tr><td><span class="mono">n_is</span></td><td>10, 30, 50, 100, 150</td>
+ <td>연산량 &prop; n_is. n=100 은 gate-D 실행분을 그대로 재사용</td></tr>
+<tr><td>블록</td><td>1, 2, 4, 8, 16, 32, 64</td>
+ <td>blk1&ndash;2 = 최적 구간, blk16&ndash;64 = 후보 다양성이 실제로 생기는 구간</td></tr>
+<tr><td>arm</td><td>base / Adj-only / IW-only / Adj+IW</td>
+ <td>앞의 둘은 후보를 뽑지 않으므로 <b>n 에 불변</b> &mdash; 결정성 점검용</td></tr>
+<tr><td>regime</td><td>seen (e0) / unseen (e99)</td>
+ <td>base 와 Adj-only 는 판별자와 무관해 seen 실행분을 공유</td></tr>
+<tr><td>후처리</td><td>raw / rawL / P1P3 / P1P3L</td>
+ <td>주 표는 <b>rawL</b>. 다른 변형은 부록</td></tr>
+<tr><td>평가</td><td colspan=2 class="ctr">동일 1,000 OD 쌍 (SPLIT_SEED 777),
+ <span class="mono">order=l2r</span>, <span class="mono">w_gamma=1.0</span>,
+ first-hitting 스케줄</td></tr>
+</table>
+
+<h2>2. 한눈에</h2>
+<p>blk1 에서 n 을 <b>10&rarr;150</b>(15배)로 늘려도 고유 후보는 <b>1.6&rarr;2.9</b> 밖에 안 늘고, ESS/n 은 0.998&rarr;0.997 다. 따라서 <b>지표는 n 에 평평할 것으로 예측했고, 실제로 평평하다.</b>
+<span class="mono">rawL</span> / unseen 에서 n 을
+10&ndash;150 로 바꿀 때 블록별 최대 변동폭은</p>
+<table>
+<tr><th>arm</th><th class="num">v&amp;a</th><th class="num">DTW (m)</th>
+ <th class="num">LCS</th><th class="num">gen_len</th></tr>
+<tr class="iw"><td>Adj+IW</td>
+ <td class="num">0.038</td>
+ <td class="num">553</td>
+ <td class="num">0.48</td>
+ <td class="num">0.8</td></tr>
+<tr class="iw"><td>IW-only</td>
+ <td class="num">0.070</td>
+ <td class="num">787</td>
+ <td class="num">0.53</td>
+ <td class="num">0.3</td></tr>
+</table>
+<p class="small">비교 기준 &mdash; v&amp;a 의 짝지지 않은 표본 오차는
+<span class="mono">sqrt(p(1&minus;p)/1000) &asymp; 0.013</span> 이다. 변동폭이 그 수준이면
+<b>n 의 효과가 아니라 몬테카를로 잡음</b>이다.</p>
+<p class="small"><b>결정성 점검.</b> base 와 Adj-only 는
+<span class="mono">n_is</span> 를 소비하지 않는다(base 는
+<span class="mono">plan_guided</span> 를 호출조차 하지 않고, Adj-only 는
+<span class="mono">disc=None</span> 으로 마스킹된 marginal 에서 곧바로 공개한다).
+두 arm 의 모든 셀이 <b>n 에 걸쳐 완전히 동일</b>하다 &mdash; 시드 고정과 결정성이 확인된다.</p>
+<p><b>n 이 실제로 움직이는 셀.</b> 5개 점의 <b>4개 구간이 모두 같은 방향</b>인 행만 골랐다 &mdash; 순수 잡음이라면 한 방향으로 정렬될 확률이 1/16 이므로, 범위가 작아도 정보가 있다. 범위가 0.032(표본오차 2배)를 넘는 셀은 3개다.</p><ul><li><b>blk1 IW-only</b>: 0.343 &rarr; 0.413 &mdash; 상승 4/4, 범위 0.070 <b>(표본오차 2배 초과)</b></li><li><b>blk2 IW-only</b>: 0.363 &rarr; 0.408 &mdash; 상승 4/4, 범위 0.045 <b>(표본오차 2배 초과)</b></li><li><b>blk16 IW-only</b>: 0.254 &rarr; 0.297 &mdash; 상승 4/4, 범위 0.043 <b>(표본오차 2배 초과)</b></li><li><b>blk4 Adj+IW</b>: 0.724 &rarr; 0.754 &mdash; 상승 4/4, 범위 0.030 (표본오차 2배 이내)</li></ul><p class="small">거꾸로, 범위가 커도 방향이 혼재(&sim;)면 잡음으로 읽어야 한다 &mdash; 표에서 <b>범위와 추세를 반드시 함께</b> 볼 이유다.</p>
+
+<h2>3. 결과 &mdash; rawL, unseen (e99, except_0 미학습)</h2>
+<p class="small">굵은 값이 그 행에서 최고. <b>범위</b> = n 에 걸친 최대&minus;최소,
+<b>추세</b> = n 증가 방향(&uarr;/&darr; 전 구간 일방, &nearr;/&searr; 다수, &sim; 혼재).
+범위만 보면 잡음과 실제 추세를 못 가르므로 <b>두 열을 함께</b> 읽어야 한다.
+회색 이탤릭 = 학습 없는 shortest path (BFS) 참조선, 회색 = n 에 불변인 arm.</p>
+<h3>valid &amp; arrival &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.282</b></td><td class="num"><b>0.282</b></td><td class="num"><b>0.282</b></td><td class="num"><b>0.282</b></td><td class="num"><b>0.282</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.762</b></td><td class="num"><b>0.762</b></td><td class="num"><b>0.762</b></td><td class="num"><b>0.762</b></td><td class="num"><b>0.762</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.343</td><td class="num">0.363</td><td class="num">0.363</td><td class="num">0.387</td><td class="num"><b>0.413</b></td><td class="num">0.070</td><td class="num">&uarr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.746</td><td class="num">0.751</td><td class="num">0.763</td><td class="num">0.754</td><td class="num"><b>0.764</b></td><td class="num">0.018</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.237</b></td><td class="num"><b>0.237</b></td><td class="num"><b>0.237</b></td><td class="num"><b>0.237</b></td><td class="num"><b>0.237</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.777</b></td><td class="num"><b>0.777</b></td><td class="num"><b>0.777</b></td><td class="num"><b>0.777</b></td><td class="num"><b>0.777</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.363</td><td class="num">0.377</td><td class="num">0.390</td><td class="num">0.398</td><td class="num"><b>0.408</b></td><td class="num">0.045</td><td class="num">&uarr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.785</td><td class="num">0.790</td><td class="num"><b>0.803</b></td><td class="num">0.790</td><td class="num">0.800</td><td class="num">0.018</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.274</b></td><td class="num"><b>0.274</b></td><td class="num"><b>0.274</b></td><td class="num"><b>0.274</b></td><td class="num"><b>0.274</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.701</b></td><td class="num"><b>0.701</b></td><td class="num"><b>0.701</b></td><td class="num"><b>0.701</b></td><td class="num"><b>0.701</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.370</td><td class="num">0.387</td><td class="num">0.365</td><td class="num">0.380</td><td class="num"><b>0.393</b></td><td class="num">0.028</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.724</td><td class="num">0.736</td><td class="num">0.740</td><td class="num">0.747</td><td class="num"><b>0.754</b></td><td class="num">0.030</td><td class="num">&uarr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.232</b></td><td class="num"><b>0.232</b></td><td class="num"><b>0.232</b></td><td class="num"><b>0.232</b></td><td class="num"><b>0.232</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.692</b></td><td class="num"><b>0.692</b></td><td class="num"><b>0.692</b></td><td class="num"><b>0.692</b></td><td class="num"><b>0.692</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.332</td><td class="num">0.370</td><td class="num">0.361</td><td class="num"><b>0.375</b></td><td class="num">0.359</td><td class="num">0.043</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.725</td><td class="num">0.735</td><td class="num"><b>0.738</b></td><td class="num">0.730</td><td class="num">0.723</td><td class="num">0.015</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.196</b></td><td class="num"><b>0.196</b></td><td class="num"><b>0.196</b></td><td class="num"><b>0.196</b></td><td class="num"><b>0.196</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.675</b></td><td class="num"><b>0.675</b></td><td class="num"><b>0.675</b></td><td class="num"><b>0.675</b></td><td class="num"><b>0.675</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.254</td><td class="num">0.283</td><td class="num">0.292</td><td class="num">0.296</td><td class="num"><b>0.297</b></td><td class="num">0.043</td><td class="num">&uarr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.690</td><td class="num">0.692</td><td class="num"><b>0.696</b></td><td class="num">0.694</td><td class="num">0.695</td><td class="num">0.006</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.174</b></td><td class="num"><b>0.174</b></td><td class="num"><b>0.174</b></td><td class="num"><b>0.174</b></td><td class="num"><b>0.174</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.592</b></td><td class="num"><b>0.592</b></td><td class="num"><b>0.592</b></td><td class="num"><b>0.592</b></td><td class="num"><b>0.592</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.226</td><td class="num">0.223</td><td class="num">0.241</td><td class="num"><b>0.246</b></td><td class="num">0.241</td><td class="num">0.023</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>0.621</b></td><td class="num">0.613</td><td class="num">0.588</td><td class="num">0.583</td><td class="num">0.605</td><td class="num">0.038</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.125</b></td><td class="num"><b>0.125</b></td><td class="num"><b>0.125</b></td><td class="num"><b>0.125</b></td><td class="num"><b>0.125</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.430</b></td><td class="num"><b>0.430</b></td><td class="num"><b>0.430</b></td><td class="num"><b>0.430</b></td><td class="num"><b>0.430</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.142</td><td class="num">0.149</td><td class="num">0.156</td><td class="num"><b>0.168</b></td><td class="num">0.158</td><td class="num">0.026</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>0.446</b></td><td class="num">0.436</td><td class="num">0.435</td><td class="num">0.444</td><td class="num">0.441</td><td class="num">0.011</td><td class="num">&searr;</td></tr></table>
+<h3>DTW&darr; (m) &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4588</b></td><td class="num"><b>4588</b></td><td class="num"><b>4588</b></td><td class="num"><b>4588</b></td><td class="num"><b>4588</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>6448</b></td><td class="num"><b>6448</b></td><td class="num"><b>6448</b></td><td class="num"><b>6448</b></td><td class="num"><b>6448</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>3772</b></td><td class="num">4021</td><td class="num">4088</td><td class="num">3999</td><td class="num">4140</td><td class="num">367</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">6288</td><td class="num">6237</td><td class="num">6144</td><td class="num">6032</td><td class="num"><b>6015</b></td><td class="num">272</td><td class="num">&darr;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4419</b></td><td class="num"><b>4419</b></td><td class="num"><b>4419</b></td><td class="num"><b>4419</b></td><td class="num"><b>4419</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>5371</b></td><td class="num"><b>5371</b></td><td class="num"><b>5371</b></td><td class="num"><b>5371</b></td><td class="num"><b>5371</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">3900</td><td class="num">3834</td><td class="num">3847</td><td class="num"><b>3823</b></td><td class="num">3936</td><td class="num">113</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">5237</td><td class="num">4963</td><td class="num">4974</td><td class="num">4873</td><td class="num"><b>4836</b></td><td class="num">400</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4612</b></td><td class="num"><b>4612</b></td><td class="num"><b>4612</b></td><td class="num"><b>4612</b></td><td class="num"><b>4612</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>7088</b></td><td class="num"><b>7088</b></td><td class="num"><b>7088</b></td><td class="num"><b>7088</b></td><td class="num"><b>7088</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4096</td><td class="num">4111</td><td class="num">4130</td><td class="num">4067</td><td class="num"><b>4030</b></td><td class="num">100</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">6515</td><td class="num">6200</td><td class="num">6097</td><td class="num"><b>5962</b></td><td class="num">6096</td><td class="num">553</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4878</b></td><td class="num"><b>4878</b></td><td class="num"><b>4878</b></td><td class="num"><b>4878</b></td><td class="num"><b>4878</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>6328</b></td><td class="num"><b>6328</b></td><td class="num"><b>6328</b></td><td class="num"><b>6328</b></td><td class="num"><b>6328</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4377</td><td class="num">4263</td><td class="num">4180</td><td class="num"><b>4169</b></td><td class="num">4214</td><td class="num">208</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>5634</b></td><td class="num">5803</td><td class="num">5650</td><td class="num">5886</td><td class="num">5751</td><td class="num">252</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4295</b></td><td class="num"><b>4295</b></td><td class="num"><b>4295</b></td><td class="num"><b>4295</b></td><td class="num"><b>4295</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>6258</b></td><td class="num"><b>6258</b></td><td class="num"><b>6258</b></td><td class="num"><b>6258</b></td><td class="num"><b>6258</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4129</td><td class="num">3996</td><td class="num">3980</td><td class="num"><b>3876</b></td><td class="num">3951</td><td class="num">254</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">6437</td><td class="num">6036</td><td class="num">6353</td><td class="num">6033</td><td class="num"><b>5997</b></td><td class="num">440</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>6406</b></td><td class="num"><b>6406</b></td><td class="num"><b>6406</b></td><td class="num"><b>6406</b></td><td class="num"><b>6406</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>10148</b></td><td class="num"><b>10148</b></td><td class="num"><b>10148</b></td><td class="num"><b>10148</b></td><td class="num"><b>10148</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">6787</td><td class="num"><b>6001</b></td><td class="num">6605</td><td class="num">6646</td><td class="num">6569</td><td class="num">787</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">9663</td><td class="num">9756</td><td class="num">10070</td><td class="num">10012</td><td class="num"><b>9546</b></td><td class="num">524</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>5291</b></td><td class="num"><b>5291</b></td><td class="num"><b>5291</b></td><td class="num"><b>5291</b></td><td class="num"><b>5291</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>7593</b></td><td class="num"><b>7593</b></td><td class="num"><b>7593</b></td><td class="num"><b>7593</b></td><td class="num"><b>7593</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">5387</td><td class="num"><b>5300</b></td><td class="num">5662</td><td class="num">5349</td><td class="num">5624</td><td class="num">362</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">8230</td><td class="num">8187</td><td class="num">8032</td><td class="num"><b>7916</b></td><td class="num">8297</td><td class="num">381</td><td class="num">&searr;</td></tr></table>
+<h3>LCS &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>15.01</b></td><td class="num"><b>15.01</b></td><td class="num"><b>15.01</b></td><td class="num"><b>15.01</b></td><td class="num"><b>15.01</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>15.27</b></td><td class="num"><b>15.27</b></td><td class="num"><b>15.27</b></td><td class="num"><b>15.27</b></td><td class="num"><b>15.27</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.70</td><td class="num">15.44</td><td class="num">15.36</td><td class="num">15.65</td><td class="num"><b>15.78</b></td><td class="num">0.42</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.39</td><td class="num">15.46</td><td class="num">15.44</td><td class="num"><b>15.47</b></td><td class="num">15.34</td><td class="num">0.13</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>15.19</b></td><td class="num"><b>15.19</b></td><td class="num"><b>15.19</b></td><td class="num"><b>15.19</b></td><td class="num"><b>15.19</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>15.58</b></td><td class="num"><b>15.58</b></td><td class="num"><b>15.58</b></td><td class="num"><b>15.58</b></td><td class="num"><b>15.58</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.71</td><td class="num"><b>15.87</b></td><td class="num">15.80</td><td class="num">15.84</td><td class="num">15.66</td><td class="num">0.21</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">16.02</td><td class="num">16.12</td><td class="num">16.15</td><td class="num">16.22</td><td class="num"><b>16.24</b></td><td class="num">0.22</td><td class="num">&uarr;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>14.81</b></td><td class="num"><b>14.81</b></td><td class="num"><b>14.81</b></td><td class="num"><b>14.81</b></td><td class="num"><b>14.81</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>14.42</b></td><td class="num"><b>14.42</b></td><td class="num"><b>14.42</b></td><td class="num"><b>14.42</b></td><td class="num"><b>14.42</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.55</td><td class="num">15.45</td><td class="num">15.52</td><td class="num"><b>15.67</b></td><td class="num">15.61</td><td class="num">0.22</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.18</td><td class="num">15.32</td><td class="num">15.55</td><td class="num">15.59</td><td class="num"><b>15.64</b></td><td class="num">0.46</td><td class="num">&uarr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>14.45</b></td><td class="num"><b>14.45</b></td><td class="num"><b>14.45</b></td><td class="num"><b>14.45</b></td><td class="num"><b>14.45</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>14.48</b></td><td class="num"><b>14.48</b></td><td class="num"><b>14.48</b></td><td class="num"><b>14.48</b></td><td class="num"><b>14.48</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.36</td><td class="num">15.52</td><td class="num"><b>15.76</b></td><td class="num">15.55</td><td class="num">15.39</td><td class="num">0.40</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.58</td><td class="num">15.67</td><td class="num"><b>15.71</b></td><td class="num">15.37</td><td class="num">15.52</td><td class="num">0.34</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>14.74</b></td><td class="num"><b>14.74</b></td><td class="num"><b>14.74</b></td><td class="num"><b>14.74</b></td><td class="num"><b>14.74</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>14.38</b></td><td class="num"><b>14.38</b></td><td class="num"><b>14.38</b></td><td class="num"><b>14.38</b></td><td class="num"><b>14.38</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.10</td><td class="num">15.08</td><td class="num">15.46</td><td class="num"><b>15.50</b></td><td class="num">15.37</td><td class="num">0.42</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.14</td><td class="num">15.08</td><td class="num"><b>15.22</b></td><td class="num">15.11</td><td class="num">15.15</td><td class="num">0.14</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>12.95</b></td><td class="num"><b>12.95</b></td><td class="num"><b>12.95</b></td><td class="num"><b>12.95</b></td><td class="num"><b>12.95</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>12.51</b></td><td class="num"><b>12.51</b></td><td class="num"><b>12.51</b></td><td class="num"><b>12.51</b></td><td class="num"><b>12.51</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">12.93</td><td class="num"><b>13.46</b></td><td class="num">13.14</td><td class="num">13.12</td><td class="num">13.05</td><td class="num">0.53</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>12.83</b></td><td class="num">12.62</td><td class="num">12.47</td><td class="num">12.35</td><td class="num">12.78</td><td class="num">0.48</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>13.47</b></td><td class="num"><b>13.47</b></td><td class="num"><b>13.47</b></td><td class="num"><b>13.47</b></td><td class="num"><b>13.47</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>13.21</b></td><td class="num"><b>13.21</b></td><td class="num"><b>13.21</b></td><td class="num"><b>13.21</b></td><td class="num"><b>13.21</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">13.54</td><td class="num">13.46</td><td class="num">13.50</td><td class="num"><b>13.67</b></td><td class="num">13.52</td><td class="num">0.21</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">12.88</td><td class="num">12.87</td><td class="num">12.79</td><td class="num">12.87</td><td class="num"><b>12.91</b></td><td class="num">0.12</td><td class="num">&sim;</td></tr></table>
+<h3>gen_len &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">25.5</td><td class="num">25.5</td><td class="num">25.5</td><td class="num">25.5</td><td class="num">25.5</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.4</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.8</td><td class="num">0.3</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">25.5</td><td class="num">25.5</td><td class="num">25.7</td><td class="num">25.8</td><td class="num">25.8</td><td class="num">0.3</td><td class="num">&uarr;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.1</td><td class="num">27.1</td><td class="num">27.1</td><td class="num">27.1</td><td class="num">27.1</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.3</td><td class="num">27.3</td><td class="num">27.3</td><td class="num">27.4</td><td class="num">27.2</td><td class="num">0.1</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">26.7</td><td class="num">26.8</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.8</td><td class="num">0.2</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.5</td><td class="num">27.5</td><td class="num">27.5</td><td class="num">27.5</td><td class="num">27.5</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">25.3</td><td class="num">25.3</td><td class="num">25.3</td><td class="num">25.3</td><td class="num">25.3</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.3</td><td class="num">27.3</td><td class="num">27.4</td><td class="num">27.3</td><td class="num">27.2</td><td class="num">0.1</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">25.0</td><td class="num">25.2</td><td class="num">25.3</td><td class="num">25.4</td><td class="num">25.3</td><td class="num">0.4</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.6</td><td class="num">27.6</td><td class="num">27.6</td><td class="num">27.6</td><td class="num">27.6</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">26.5</td><td class="num">26.5</td><td class="num">26.5</td><td class="num">26.5</td><td class="num">26.5</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.3</td><td class="num">27.4</td><td class="num">27.4</td><td class="num">27.4</td><td class="num">27.4</td><td class="num">0.1</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">26.4</td><td class="num">26.2</td><td class="num">26.3</td><td class="num">26.0</td><td class="num">26.0</td><td class="num">0.4</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.0</td><td class="num">27.0</td><td class="num">27.0</td><td class="num">27.0</td><td class="num">27.0</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">26.2</td><td class="num">26.2</td><td class="num">26.2</td><td class="num">26.2</td><td class="num">26.2</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.1</td><td class="num">26.9</td><td class="num">27.1</td><td class="num">27.0</td><td class="num">26.9</td><td class="num">0.2</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">26.1</td><td class="num">26.0</td><td class="num">25.7</td><td class="num">25.9</td><td class="num">25.9</td><td class="num">0.5</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">25.4</td><td class="num">25.4</td><td class="num">25.4</td><td class="num">25.4</td><td class="num">25.4</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.6</td><td class="num">27.6</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.9</td><td class="num">0.3</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">25.4</td><td class="num">25.5</td><td class="num">25.4</td><td class="num">25.1</td><td class="num">25.2</td><td class="num">0.4</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">25.7</td><td class="num">25.7</td><td class="num">25.7</td><td class="num">25.7</td><td class="num">25.7</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">26.9</td><td class="num">26.8</td><td class="num">26.9</td><td class="num">26.8</td><td class="num">26.9</td><td class="num">0.1</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">25.1</td><td class="num">24.9</td><td class="num">25.0</td><td class="num">24.9</td><td class="num">24.4</td><td class="num">0.8</td><td class="num">&searr;</td></tr></table>
+
+
+
+<h2>4. 후보 다양성 &mdash; 왜 평평한가</h2>
+<p>지표가 평평한 이유는 <b>n 을 늘려도 후보 집합이 자라지 않기</b> 때문이다.
+아래는 <span class="mono">plan_guided</span> 의 <span class="mono">diag_log</span> 에서
+reveal 마다 기록한 <b>서로 다른 후보 블록 수</b>와 가중치 ESS 다
+(<span class="mono">tools/diag/diag_proposal_diversity.py</span>, OD 100 쌍).</p>
+<table><tr><th rowspan=2>blk</th><th rowspan=2>adjacency<br>마스킹</th><th class="num" colspan=5>고유 후보 수</th><th class="num" colspan=5>ESS / n</th></tr><tr><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th></tr>
+<tr class="iw"><td>1</td><td>ON</td><td class="num">1.6</td><td class="num">2.0</td><td class="num">2.2</td><td class="num">2.6</td><td class="num">2.9</td><td class="num">0.998</td><td class="num">0.998</td><td class="num">0.998</td><td class="num">0.997</td><td class="num">0.997</td></tr>
+<tr class=""><td>1</td><td>OFF</td><td class="num">1.6</td><td class="num">3.0</td><td class="num">3.7</td><td class="num">3.9</td><td class="num">3.9</td><td class="num">0.994</td><td class="num">0.994</td><td class="num">0.993</td><td class="num">0.992</td><td class="num">0.989</td></tr>
+<tr class="iw"><td>2</td><td>ON</td><td class="num">1.8</td><td class="num">2.4</td><td class="num">2.9</td><td class="num">3.6</td><td class="num">4.2</td><td class="num">0.982</td><td class="num">0.980</td><td class="num">0.977</td><td class="num">0.976</td><td class="num">0.976</td></tr>
+<tr class=""><td>2</td><td>OFF</td><td class="num">1.6</td><td class="num">2.2</td><td class="num">2.5</td><td class="num">3.3</td><td class="num">3.9</td><td class="num">0.983</td><td class="num">0.981</td><td class="num">0.979</td><td class="num">0.979</td><td class="num">0.977</td></tr>
+<tr class="iw"><td>4</td><td>ON</td><td class="num">1.7</td><td class="num">2.4</td><td class="num">2.9</td><td class="num">3.7</td><td class="num">4.4</td><td class="num">0.964</td><td class="num">0.955</td><td class="num">0.954</td><td class="num">0.952</td><td class="num">0.949</td></tr>
+<tr class=""><td>4</td><td>OFF</td><td class="num">1.6</td><td class="num">2.3</td><td class="num">2.0</td><td class="num">2.5</td><td class="num">3.8</td><td class="num">0.970</td><td class="num">0.958</td><td class="num">0.979</td><td class="num">0.978</td><td class="num">0.961</td></tr>
+<tr class="iw"><td>8</td><td>ON</td><td class="num">2.4</td><td class="num">4.5</td><td class="num">6.3</td><td class="num">11.7</td><td class="num">15.8</td><td class="num">0.952</td><td class="num">0.939</td><td class="num">0.932</td><td class="num">0.907</td><td class="num">0.908</td></tr>
+<tr class=""><td>8</td><td>OFF</td><td class="num">2.4</td><td class="num">4.3</td><td class="num">6.0</td><td class="num">9.8</td><td class="num">15.4</td><td class="num">0.960</td><td class="num">0.947</td><td class="num">0.939</td><td class="num">0.937</td><td class="num">0.920</td></tr>
+<tr class="iw"><td>16</td><td>ON</td><td class="num">3.6</td><td class="num">8.3</td><td class="num">12.0</td><td class="num">24.0</td><td class="num">30.2</td><td class="num">0.961</td><td class="num">0.946</td><td class="num">0.943</td><td class="num">0.907</td><td class="num">0.932</td></tr>
+<tr class=""><td>16</td><td>OFF</td><td class="num">3.7</td><td class="num">8.7</td><td class="num">13.0</td><td class="num">23.8</td><td class="num">33.3</td><td class="num">0.965</td><td class="num">0.953</td><td class="num">0.948</td><td class="num">0.940</td><td class="num">0.940</td></tr>
+<tr class="iw"><td>32</td><td>ON</td><td class="num">4.0</td><td class="num">10.0</td><td class="num">21.5</td><td class="num">28.1</td><td class="num">58.9</td><td class="num">0.941</td><td class="num">0.920</td><td class="num">0.876</td><td class="num">0.907</td><td class="num">0.865</td></tr>
+<tr class=""><td>32</td><td>OFF</td><td class="num">4.8</td><td class="num">12.3</td><td class="num">19.2</td><td class="num">36.3</td><td class="num">52.8</td><td class="num">0.968</td><td class="num">0.958</td><td class="num">0.958</td><td class="num">0.956</td><td class="num">0.953</td></tr>
+<tr class="iw"><td>64</td><td>ON</td><td class="num">5.1</td><td class="num">13.3</td><td class="num">21.5</td><td class="num">40.3</td><td class="num">59.8</td><td class="num">0.941</td><td class="num">0.920</td><td class="num">0.906</td><td class="num">0.898</td><td class="num">0.898</td></tr>
+<tr class=""><td>64</td><td>OFF</td><td class="num">4.5</td><td class="num">12.3</td><td class="num">20.0</td><td class="num">38.0</td><td class="num">56.5</td><td class="num">0.986</td><td class="num">0.973</td><td class="num">0.968</td><td class="num">0.964</td><td class="num">0.961</td></tr></table>
+<p><b>이 표가 스윕 전 예측을 절반만 확인한다.</b> 두 구간을 나눠 읽어야 한다.</p>
+<ul>
+<li><b>작은 블록(1&ndash;2) &mdash; proposal 한계.</b> 예측대로다. 마스킹 ON 에서 고유 후보가
+ n=10 에서 1.6&ndash;1.8, n=150 에서도 <b>2.9&ndash;4.2</b> 에 머문다. 시나리오 그래프
+ out-degree(평균 2.74)가 상한이라 n 을 15 배 늘려도 후보 집합이 자라지 않는다.
+ <b>여기서 지표가 평평한 것은 후보가 없어서다.</b></li>
+<li><b>큰 블록(16&ndash;64) &mdash; 판별자 한계.</b> 여기서는 후보가 <b>실제로</b> 늘어난다:
+ blk64 에서 5.1 &rarr; <b>59.8</b> 개, 포화 조짐이 없다. 그런데도 Adj+IW 의 지표는
+ 여전히 평평하다(v&amp;a 범위 0.010). ESS/n 도 0.94 &rarr; 0.90 로 겨우 내려간다.
+ <b>즉 후보 60 개를 줘도 판별자가 그것들을 갈라내지 못한다.</b> 원인이 다르므로
+ 처방도 다르다.</li>
+</ul>
+<p class="small">이 구분이 중요하다. n=100 한 점만 보고 있었을 때는 &ldquo;후보 다양성 부재&rdquo;
+하나로 설명했지만, 스윕을 보면 <b>작은 블록에서만</b> 그 설명이 맞다. 큰 블록의 평평함은
+판별자가 배포 과제(같은 <span class="mono">p&theta;</span> 가 같은 스텝에 낸 후보들의 순위)
+에 둔감하다는 증거다 &mdash; 전역 val acc 0.69&ndash;0.73 은 건강하지만 그건 훨씬 쉬운 과제다.</p>
+
+<h2>5. 연산량 &mdash; n_is 는 사실상 무료다</h2>
+<p>스윕을 돌리기 전에 벽시계 시간을 먼저 쟀다(blk2, seen, OD 100 쌍, 4 arm &times;
+4 후처리 변형 전부 포함, 단일 GPU):</p>
+<table>
+<tr><th class="num">n_is</th><th class="num">wall</th><th>비고</th></tr>
+<tr><td class="num">10</td><td class="num">459 s</td><td rowspan=2 class="ctr">
+ 후보 <b>15 배</b>에 시간 <b>+3.3%</b></td></tr>
+<tr><td class="num">150</td><td class="num">474 s</td></tr>
+</table>
+<p>즉 이 규모에서 병목은 판별자 배치가 아니라 <b>reveal 마다 도는 backbone forward</b>와
+CPU 채점이다. <span class="mono">batch &times; n_is</span> = 100&times;150 = 15,000 개
+시퀀스도 GPU 를 다 못 채운다. 그러므로 <b>&ldquo;n_is 를 줄여서 빨라진다&rdquo;는 주장은
+성립하지 않는다</b> &mdash; FLOP 은 줄지만 시간은 그대로다. 이 스윕의 값어치는 속도가
+아니라 아래 세 가지다.</p>
+
+<h2>6. IW-only 는 왜 아직 n 에 반응하는가</h2>
+<p>모든 arm 중 <b>IW-only(마스킹 없음)</b> 만 n 에 뚜렷하게 움직인다 &mdash; v&amp;a 범위
+0.070, 그리고 <b>단조 증가</b>다. 그 증가분이 어디서 오는지
+분해하면 답이 분명하다.</p>
+<table><tr><th>blk</th><th>지표</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th></tr>
+<tr class="iw"><td rowspan=3>1</td><td>valid</td><td class="num">0.345</td><td class="num">0.365</td><td class="num">0.364</td><td class="num">0.387</td><td class="num">0.413</td><td class="num">0.068</td></tr>
+<tr class="iw"><td>arrival</td><td class="num">0.992</td><td class="num">0.993</td><td class="num">0.993</td><td class="num">0.997</td><td class="num">0.995</td><td class="num">0.005</td></tr>
+<tr class="iw"><td>v&amp;a</td><td class="num">0.343</td><td class="num">0.363</td><td class="num">0.363</td><td class="num">0.387</td><td class="num">0.413</td><td class="num">0.070</td></tr>
+<tr class="iw"><td rowspan=3>2</td><td>valid</td><td class="num">0.372</td><td class="num">0.381</td><td class="num">0.397</td><td class="num">0.406</td><td class="num">0.415</td><td class="num">0.043</td></tr>
+<tr class="iw"><td>arrival</td><td class="num">0.977</td><td class="num">0.985</td><td class="num">0.986</td><td class="num">0.983</td><td class="num">0.984</td><td class="num">0.009</td></tr>
+<tr class="iw"><td>v&amp;a</td><td class="num">0.363</td><td class="num">0.377</td><td class="num">0.390</td><td class="num">0.398</td><td class="num">0.408</td><td class="num">0.045</td></tr>
+<tr class="iw"><td rowspan=3>4</td><td>valid</td><td class="num">0.377</td><td class="num">0.395</td><td class="num">0.377</td><td class="num">0.391</td><td class="num">0.401</td><td class="num">0.024</td></tr>
+<tr class="iw"><td>arrival</td><td class="num">0.977</td><td class="num">0.979</td><td class="num">0.974</td><td class="num">0.973</td><td class="num">0.975</td><td class="num">0.006</td></tr>
+<tr class="iw"><td>v&amp;a</td><td class="num">0.370</td><td class="num">0.387</td><td class="num">0.365</td><td class="num">0.380</td><td class="num">0.393</td><td class="num">0.028</td></tr>
+<tr class="iw"><td rowspan=3>8</td><td>valid</td><td class="num">0.350</td><td class="num">0.388</td><td class="num">0.389</td><td class="num">0.403</td><td class="num">0.384</td><td class="num">0.053</td></tr>
+<tr class="iw"><td>arrival</td><td class="num">0.961</td><td class="num">0.948</td><td class="num">0.938</td><td class="num">0.930</td><td class="num">0.942</td><td class="num">0.031</td></tr>
+<tr class="iw"><td>v&amp;a</td><td class="num">0.332</td><td class="num">0.370</td><td class="num">0.361</td><td class="num">0.375</td><td class="num">0.359</td><td class="num">0.043</td></tr>
+<tr class="iw"><td rowspan=3>16</td><td>valid</td><td class="num">0.282</td><td class="num">0.307</td><td class="num">0.316</td><td class="num">0.332</td><td class="num">0.323</td><td class="num">0.050</td></tr>
+<tr class="iw"><td>arrival</td><td class="num">0.908</td><td class="num">0.922</td><td class="num">0.919</td><td class="num">0.914</td><td class="num">0.916</td><td class="num">0.014</td></tr>
+<tr class="iw"><td>v&amp;a</td><td class="num">0.254</td><td class="num">0.283</td><td class="num">0.292</td><td class="num">0.296</td><td class="num">0.297</td><td class="num">0.043</td></tr>
+<tr class="iw"><td rowspan=3>32</td><td>valid</td><td class="num">0.262</td><td class="num">0.259</td><td class="num">0.278</td><td class="num">0.286</td><td class="num">0.276</td><td class="num">0.027</td></tr>
+<tr class="iw"><td>arrival</td><td class="num">0.882</td><td class="num">0.899</td><td class="num">0.882</td><td class="num">0.893</td><td class="num">0.900</td><td class="num">0.018</td></tr>
+<tr class="iw"><td>v&amp;a</td><td class="num">0.226</td><td class="num">0.223</td><td class="num">0.241</td><td class="num">0.246</td><td class="num">0.241</td><td class="num">0.023</td></tr>
+<tr class="iw"><td rowspan=3>64</td><td>valid</td><td class="num">0.234</td><td class="num">0.258</td><td class="num">0.268</td><td class="num">0.268</td><td class="num">0.278</td><td class="num">0.044</td></tr>
+<tr class="iw"><td>arrival</td><td class="num">0.680</td><td class="num">0.695</td><td class="num">0.682</td><td class="num">0.690</td><td class="num">0.680</td><td class="num">0.015</td></tr>
+<tr class="iw"><td>v&amp;a</td><td class="num">0.142</td><td class="num">0.149</td><td class="num">0.156</td><td class="num">0.168</td><td class="num">0.158</td><td class="num">0.026</td></tr></table>
+<p><b>전부 <span class="mono">valid</span> 에서 온다. arrival 은 평평하다.</b>
+마스킹이 없으면 후보를 많이 뽑을수록 <b>그 중 하나가 우연히 합법일 확률</b>이 올라간다.
+즉 n_is 가 사 주는 것은 &ldquo;더 나은 계획&rdquo;이 아니라 <b>합법성을 운으로 맞추는 것</b>이다.
+Adj+IW 는 마스킹이 합법성을 이미 보장하므로 그 이득이 존재할 자리가 없고, 남은 일은
+합법 후보들 사이의 순위 매기기뿐이라 곧바로 포화한다.</p>
+<p class="small">그리고 이렇게 n 을 15 배 써서 얻은 IW-only 의 v&amp;a
+(10&rarr;150) 조차 Adj+IW 가 <b>n=10</b> 으로 내는 값에
+한참 못 미친다. 마스킹은 n_is 로 대체할 수 있는 것이 아니다.</p>
+
+<h2>7. 따라서 무엇을 할 수 있는가</h2>
+<ul>
+<li><b>작은 블록에서는 전수 열거로 바꿔야 한다.</b> 이게 이 스윕의 핵심 함의다.
+ 마스킹 ON 의 합법 후보 공간이 blk2 에서
+ <span class="mono">&asymp;2.74&sup2; &asymp; 7.5</span> 개뿐이므로, 100 개를 뽑는 대신
+ <b>전부 세면</b> SNIS 가 추정이 아니라 <b>정확 계산</b>이 되어 몬테카를로 오차가
+ 0 이 된다. 위 표대로 시간은 어차피 n 에 둔감하니 <b>공짜로 정확해지는</b> 셈이다.
+ 지금은 100 번 뽑아 같은 3&ndash;4 개를 중복으로 세고 있다.</li>
+<li><b>D-CBG 와의 비교에서 n_is 는 변호할 필요가 없는 축이다.</b> D-CBG exact 는 매 스텝
+ 전체 vocab(1387) 을 훑는다. 우리가 n=10 으로도 같은 성능을 내는 것이 확인됐으므로,
+ &ldquo;IW 는 n_is 를 크게 잡아야 작동한다&rdquo; 는 반론이 봉쇄된다. 리뷰어가
+ <span class="mono">n_is</span> 를 튜닝 자유도로 지적할 여지가 없다.</li>
+<li><b>큰 블록의 병목은 n_is 가 아니라 판별자다.</b> blk64 에서 후보를 60 개까지
+ 다양화해도 지표가 안 움직인다. 그러니 여기서 할 일은 n 을 더 키우는 게 아니라
+ <b>판별자를 배포 과제로 학습</b>시키는 것이다 &mdash; 지금 학습 대상은 &ldquo;except 데이터
+ vs 무조건 모델 pool&rdquo; 인데, 실제로 하는 일은 &ldquo;같은 스텝의 후보들 순위 매기기&rdquo;로
+ 훨씬 어렵다. 다만 성능 최적 블록이 1&ndash;2 라 이 방향의 실익은 제한적이다.</li>
+</ul>
+<p class="small"><b>남는 위험.</b> 이 스윕은 <span class="mono">n_is</span> 가 튜닝
+자유도가 아님을 보이지만, 동시에 <b>IW 재가중이 마스킹 위에서 기여하는 폭이 좁다</b>는
+것도 보여준다 &mdash; Adj-only 대비 Adj+IW 의 이득이 blk2 v&amp;a 0.777&rarr;0.799 이고,
+그 이득이 n 에 무관하다. 즉 이득의 출처는 후보 개수가 아니라 판별자 신호 자체이며,
+그것을 키우는 것이 다음 과제다.</p>
+
+<hr>
+<p class="small"><b>파이프라인.</b> A <span class="mono">scripts/run_v6_nis.sh</span>
+(<span class="mono">tools/eval/three_way_postproc.py -n_is N</span>, 태그
+<span class="mono">v6LE{B}seenN{N}</span> / <span class="mono">v6LE{B}unsN{N}</span>
+&mdash; gate-D 레코드를 덮지 않는다) &rarr;
+B <span class="mono">postproc_loopcut.py</span> + <span class="mono">collect_va_table.py -shape 1</span>
+&rarr; C <span class="mono">diag_proposal_diversity.py -nis_list</span>.
+n=100 은 재실행하지 않고 gate-D 태그에서 수집한다.
+plot 용 CSV: <span class="mono">sets_v6/LE/res/nis_plot_data.csv</span> (1120 행).</p>
+<h2>8. 부록 &mdash; raw (후처리 없음), unseen</h2><h3>valid &amp; arrival &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.282</b></td><td class="num"><b>0.282</b></td><td class="num"><b>0.282</b></td><td class="num">0.275</td><td class="num"><b>0.282</b></td><td class="num">0.007</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.762</b></td><td class="num"><b>0.762</b></td><td class="num"><b>0.762</b></td><td class="num"><b>0.762</b></td><td class="num"><b>0.762</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.343</td><td class="num">0.363</td><td class="num">0.363</td><td class="num">0.386</td><td class="num"><b>0.413</b></td><td class="num">0.070</td><td class="num">&uarr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.746</td><td class="num">0.751</td><td class="num">0.763</td><td class="num">0.754</td><td class="num"><b>0.764</b></td><td class="num">0.018</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.237</b></td><td class="num"><b>0.237</b></td><td class="num"><b>0.237</b></td><td class="num">0.229</td><td class="num"><b>0.237</b></td><td class="num">0.008</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.777</b></td><td class="num"><b>0.777</b></td><td class="num"><b>0.777</b></td><td class="num"><b>0.777</b></td><td class="num"><b>0.777</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.363</td><td class="num">0.377</td><td class="num">0.390</td><td class="num">0.397</td><td class="num"><b>0.408</b></td><td class="num">0.045</td><td class="num">&uarr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.785</td><td class="num">0.790</td><td class="num"><b>0.803</b></td><td class="num">0.790</td><td class="num">0.800</td><td class="num">0.018</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.274</b></td><td class="num"><b>0.274</b></td><td class="num"><b>0.274</b></td><td class="num">0.268</td><td class="num"><b>0.274</b></td><td class="num">0.006</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.701</b></td><td class="num"><b>0.701</b></td><td class="num"><b>0.701</b></td><td class="num"><b>0.701</b></td><td class="num"><b>0.701</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.370</td><td class="num">0.387</td><td class="num">0.365</td><td class="num">0.379</td><td class="num"><b>0.393</b></td><td class="num">0.028</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.724</td><td class="num">0.736</td><td class="num">0.740</td><td class="num">0.747</td><td class="num"><b>0.754</b></td><td class="num">0.030</td><td class="num">&uarr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.232</b></td><td class="num"><b>0.232</b></td><td class="num"><b>0.232</b></td><td class="num"><b>0.232</b></td><td class="num"><b>0.232</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.692</b></td><td class="num"><b>0.692</b></td><td class="num"><b>0.692</b></td><td class="num"><b>0.692</b></td><td class="num"><b>0.692</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.332</td><td class="num">0.370</td><td class="num">0.361</td><td class="num"><b>0.373</b></td><td class="num">0.359</td><td class="num">0.041</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.725</td><td class="num">0.735</td><td class="num"><b>0.738</b></td><td class="num">0.730</td><td class="num">0.723</td><td class="num">0.015</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.196</b></td><td class="num"><b>0.196</b></td><td class="num"><b>0.196</b></td><td class="num">0.195</td><td class="num"><b>0.196</b></td><td class="num">0.001</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.675</b></td><td class="num"><b>0.675</b></td><td class="num"><b>0.675</b></td><td class="num"><b>0.675</b></td><td class="num"><b>0.675</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.254</td><td class="num">0.283</td><td class="num">0.292</td><td class="num">0.296</td><td class="num"><b>0.297</b></td><td class="num">0.043</td><td class="num">&uarr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">0.690</td><td class="num">0.692</td><td class="num"><b>0.696</b></td><td class="num">0.694</td><td class="num">0.695</td><td class="num">0.006</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.174</b></td><td class="num"><b>0.174</b></td><td class="num"><b>0.174</b></td><td class="num">0.170</td><td class="num"><b>0.174</b></td><td class="num">0.004</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.592</b></td><td class="num"><b>0.592</b></td><td class="num"><b>0.592</b></td><td class="num"><b>0.592</b></td><td class="num"><b>0.592</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.226</td><td class="num">0.223</td><td class="num">0.241</td><td class="num"><b>0.243</b></td><td class="num">0.241</td><td class="num">0.020</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>0.621</b></td><td class="num">0.613</td><td class="num">0.588</td><td class="num">0.583</td><td class="num">0.605</td><td class="num">0.038</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>0.125</b></td><td class="num"><b>0.125</b></td><td class="num"><b>0.125</b></td><td class="num">0.121</td><td class="num"><b>0.125</b></td><td class="num">0.004</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>0.430</b></td><td class="num"><b>0.430</b></td><td class="num"><b>0.430</b></td><td class="num"><b>0.430</b></td><td class="num"><b>0.430</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">0.142</td><td class="num">0.149</td><td class="num">0.156</td><td class="num"><b>0.165</b></td><td class="num">0.158</td><td class="num">0.023</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>0.446</b></td><td class="num">0.436</td><td class="num">0.435</td><td class="num">0.444</td><td class="num">0.441</td><td class="num">0.011</td><td class="num">&searr;</td></tr></table>
+<h3>DTW&darr; (m) &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4588</b></td><td class="num"><b>4588</b></td><td class="num"><b>4588</b></td><td class="num">4958</td><td class="num"><b>4588</b></td><td class="num">370</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>6448</b></td><td class="num"><b>6448</b></td><td class="num"><b>6448</b></td><td class="num">9232</td><td class="num"><b>6448</b></td><td class="num">2784</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>3772</b></td><td class="num">4021</td><td class="num">4088</td><td class="num">4144</td><td class="num">4140</td><td class="num">372</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">6288</td><td class="num">6237</td><td class="num">6144</td><td class="num">8849</td><td class="num"><b>6015</b></td><td class="num">2833</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4419</b></td><td class="num"><b>4419</b></td><td class="num"><b>4419</b></td><td class="num">4549</td><td class="num"><b>4419</b></td><td class="num">130</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>5371</b></td><td class="num"><b>5371</b></td><td class="num"><b>5371</b></td><td class="num">7785</td><td class="num"><b>5371</b></td><td class="num">2414</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">3900</td><td class="num"><b>3834</b></td><td class="num">3847</td><td class="num">3995</td><td class="num">3936</td><td class="num">161</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">5237</td><td class="num">4963</td><td class="num">4974</td><td class="num">6791</td><td class="num"><b>4836</b></td><td class="num">1955</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4612</b></td><td class="num"><b>4612</b></td><td class="num"><b>4612</b></td><td class="num">4630</td><td class="num"><b>4612</b></td><td class="num">18</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>7088</b></td><td class="num"><b>7088</b></td><td class="num"><b>7088</b></td><td class="num">9733</td><td class="num"><b>7088</b></td><td class="num">2645</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4096</td><td class="num">4111</td><td class="num">4130</td><td class="num">4222</td><td class="num"><b>4030</b></td><td class="num">193</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">6515</td><td class="num">6200</td><td class="num">6097</td><td class="num">7880</td><td class="num"><b>6096</b></td><td class="num">1784</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4878</b></td><td class="num"><b>4878</b></td><td class="num"><b>4878</b></td><td class="num">4988</td><td class="num"><b>4878</b></td><td class="num">110</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>6328</b></td><td class="num"><b>6328</b></td><td class="num"><b>6328</b></td><td class="num">8028</td><td class="num"><b>6328</b></td><td class="num">1701</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4377</td><td class="num">4263</td><td class="num"><b>4180</b></td><td class="num">4266</td><td class="num">4214</td><td class="num">197</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>5634</b></td><td class="num">5803</td><td class="num">5650</td><td class="num">6966</td><td class="num">5751</td><td class="num">1332</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4295</b></td><td class="num"><b>4295</b></td><td class="num"><b>4295</b></td><td class="num">4444</td><td class="num"><b>4295</b></td><td class="num">149</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>6258</b></td><td class="num"><b>6258</b></td><td class="num"><b>6258</b></td><td class="num">7742</td><td class="num"><b>6258</b></td><td class="num">1483</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4129</td><td class="num">3996</td><td class="num">3980</td><td class="num">4069</td><td class="num"><b>3951</b></td><td class="num">178</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">6437</td><td class="num">6036</td><td class="num">6353</td><td class="num">6810</td><td class="num"><b>5997</b></td><td class="num">812</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>6406</b></td><td class="num"><b>6406</b></td><td class="num"><b>6406</b></td><td class="num">7116</td><td class="num"><b>6406</b></td><td class="num">709</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>10148</b></td><td class="num"><b>10148</b></td><td class="num"><b>10148</b></td><td class="num">11921</td><td class="num"><b>10148</b></td><td class="num">1773</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">6787</td><td class="num"><b>6001</b></td><td class="num">6605</td><td class="num">7186</td><td class="num">6569</td><td class="num">1185</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">9663</td><td class="num">9756</td><td class="num">10070</td><td class="num">11592</td><td class="num"><b>9546</b></td><td class="num">2045</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>5291</b></td><td class="num"><b>5291</b></td><td class="num"><b>5291</b></td><td class="num">5537</td><td class="num"><b>5291</b></td><td class="num">246</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>7593</b></td><td class="num"><b>7593</b></td><td class="num"><b>7593</b></td><td class="num">8683</td><td class="num"><b>7593</b></td><td class="num">1090</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">5387</td><td class="num"><b>5300</b></td><td class="num">5662</td><td class="num">5597</td><td class="num">5624</td><td class="num">362</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">8230</td><td class="num">8187</td><td class="num"><b>8032</b></td><td class="num">8580</td><td class="num">8297</td><td class="num">548</td><td class="num">&searr;</td></tr></table>
+<h3>LCS &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">15.01</td><td class="num">15.01</td><td class="num">15.01</td><td class="num"><b>15.02</b></td><td class="num">15.01</td><td class="num">0.01</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">15.27</td><td class="num">15.27</td><td class="num">15.27</td><td class="num"><b>15.37</b></td><td class="num">15.27</td><td class="num">0.09</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.70</td><td class="num">15.44</td><td class="num">15.36</td><td class="num">15.67</td><td class="num"><b>15.78</b></td><td class="num">0.42</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.39</td><td class="num">15.46</td><td class="num">15.44</td><td class="num"><b>15.54</b></td><td class="num">15.34</td><td class="num">0.21</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">15.19</td><td class="num">15.19</td><td class="num">15.19</td><td class="num"><b>15.25</b></td><td class="num">15.19</td><td class="num">0.06</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">15.58</td><td class="num">15.58</td><td class="num">15.58</td><td class="num"><b>15.64</b></td><td class="num">15.58</td><td class="num">0.07</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.71</td><td class="num"><b>15.87</b></td><td class="num">15.80</td><td class="num">15.85</td><td class="num">15.66</td><td class="num">0.21</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">16.02</td><td class="num">16.12</td><td class="num">16.15</td><td class="num"><b>16.28</b></td><td class="num">16.24</td><td class="num">0.26</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">14.81</td><td class="num">14.81</td><td class="num">14.81</td><td class="num"><b>14.85</b></td><td class="num">14.81</td><td class="num">0.04</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">14.42</td><td class="num">14.42</td><td class="num">14.42</td><td class="num"><b>14.50</b></td><td class="num">14.42</td><td class="num">0.09</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.55</td><td class="num">15.45</td><td class="num">15.52</td><td class="num"><b>15.69</b></td><td class="num">15.61</td><td class="num">0.24</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.18</td><td class="num">15.32</td><td class="num">15.55</td><td class="num"><b>15.68</b></td><td class="num">15.64</td><td class="num">0.50</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">14.45</td><td class="num">14.45</td><td class="num">14.45</td><td class="num"><b>14.47</b></td><td class="num">14.45</td><td class="num">0.02</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">14.48</td><td class="num">14.48</td><td class="num">14.48</td><td class="num"><b>14.56</b></td><td class="num">14.48</td><td class="num">0.08</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.36</td><td class="num">15.52</td><td class="num"><b>15.76</b></td><td class="num">15.57</td><td class="num">15.39</td><td class="num">0.40</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.58</td><td class="num">15.67</td><td class="num"><b>15.71</b></td><td class="num">15.43</td><td class="num">15.52</td><td class="num">0.29</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">14.74</td><td class="num">14.74</td><td class="num">14.74</td><td class="num"><b>14.78</b></td><td class="num">14.74</td><td class="num">0.04</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">14.38</td><td class="num">14.38</td><td class="num">14.38</td><td class="num"><b>14.47</b></td><td class="num">14.38</td><td class="num">0.09</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.10</td><td class="num">15.08</td><td class="num">15.46</td><td class="num"><b>15.53</b></td><td class="num">15.37</td><td class="num">0.44</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.14</td><td class="num">15.08</td><td class="num"><b>15.22</b></td><td class="num">15.18</td><td class="num">15.15</td><td class="num">0.14</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">12.95</td><td class="num">12.95</td><td class="num">12.95</td><td class="num"><b>13.00</b></td><td class="num">12.95</td><td class="num">0.05</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">12.51</td><td class="num">12.51</td><td class="num">12.51</td><td class="num"><b>12.63</b></td><td class="num">12.51</td><td class="num">0.12</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">12.93</td><td class="num"><b>13.46</b></td><td class="num">13.14</td><td class="num">13.15</td><td class="num">13.05</td><td class="num">0.53</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>12.83</b></td><td class="num">12.62</td><td class="num">12.47</td><td class="num">12.46</td><td class="num">12.78</td><td class="num">0.37</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">13.47</td><td class="num">13.47</td><td class="num">13.47</td><td class="num"><b>13.51</b></td><td class="num">13.47</td><td class="num">0.04</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">13.21</td><td class="num">13.21</td><td class="num">13.21</td><td class="num"><b>13.28</b></td><td class="num">13.21</td><td class="num">0.07</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">13.54</td><td class="num">13.46</td><td class="num">13.50</td><td class="num"><b>13.71</b></td><td class="num">13.52</td><td class="num">0.25</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">12.88</td><td class="num">12.87</td><td class="num">12.79</td><td class="num"><b>12.92</b></td><td class="num">12.91</td><td class="num">0.13</td><td class="num">&searr;</td></tr></table>
+<h3>gen_len &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">28.3</td><td class="num">27.7</td><td class="num">0.6</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">25.5</td><td class="num">25.5</td><td class="num">25.5</td><td class="num">44.5</td><td class="num">25.5</td><td class="num">19.0</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.4</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">28.3</td><td class="num">27.8</td><td class="num">0.8</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">25.5</td><td class="num">25.5</td><td class="num">25.7</td><td class="num">45.4</td><td class="num">25.8</td><td class="num">19.9</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.1</td><td class="num">27.1</td><td class="num">27.1</td><td class="num">27.7</td><td class="num">27.1</td><td class="num">0.5</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">39.8</td><td class="num">26.9</td><td class="num">12.9</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.3</td><td class="num">27.3</td><td class="num">27.3</td><td class="num">27.7</td><td class="num">27.2</td><td class="num">0.4</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">26.7</td><td class="num">26.8</td><td class="num">26.9</td><td class="num">37.8</td><td class="num">26.8</td><td class="num">11.1</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.5</td><td class="num">27.5</td><td class="num">27.5</td><td class="num">28.0</td><td class="num">27.5</td><td class="num">0.4</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">25.3</td><td class="num">25.3</td><td class="num">25.3</td><td class="num">42.0</td><td class="num">25.3</td><td class="num">16.6</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.3</td><td class="num">27.3</td><td class="num">27.4</td><td class="num">27.6</td><td class="num">27.2</td><td class="num">0.3</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">25.0</td><td class="num">25.2</td><td class="num">25.3</td><td class="num">38.0</td><td class="num">25.3</td><td class="num">13.1</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.6</td><td class="num">27.6</td><td class="num">27.6</td><td class="num">28.2</td><td class="num">27.6</td><td class="num">0.7</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">26.5</td><td class="num">26.5</td><td class="num">26.5</td><td class="num">36.5</td><td class="num">26.5</td><td class="num">10.0</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.3</td><td class="num">27.4</td><td class="num">27.4</td><td class="num">27.7</td><td class="num">27.4</td><td class="num">0.4</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">26.4</td><td class="num">26.2</td><td class="num">26.3</td><td class="num">32.7</td><td class="num">26.0</td><td class="num">6.7</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.0</td><td class="num">27.0</td><td class="num">27.0</td><td class="num">27.7</td><td class="num">27.0</td><td class="num">0.7</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">26.2</td><td class="num">26.2</td><td class="num">26.2</td><td class="num">35.2</td><td class="num">26.2</td><td class="num">8.9</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.1</td><td class="num">26.9</td><td class="num">27.1</td><td class="num">27.5</td><td class="num">26.9</td><td class="num">0.6</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">26.1</td><td class="num">26.0</td><td class="num">25.7</td><td class="num">31.3</td><td class="num">25.9</td><td class="num">5.6</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">27.7</td><td class="num">29.2</td><td class="num">27.7</td><td class="num">1.6</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">25.4</td><td class="num">25.4</td><td class="num">25.4</td><td class="num">34.9</td><td class="num">25.4</td><td class="num">9.5</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">27.6</td><td class="num">27.6</td><td class="num">27.7</td><td class="num">29.0</td><td class="num">27.9</td><td class="num">1.5</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">25.4</td><td class="num">25.5</td><td class="num">25.4</td><td class="num">32.8</td><td class="num">25.2</td><td class="num">7.6</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">26.9</td><td class="num">27.9</td><td class="num">26.9</td><td class="num">1.0</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">25.7</td><td class="num">25.7</td><td class="num">25.7</td><td class="num">32.1</td><td class="num">25.7</td><td class="num">6.4</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">26.9</td><td class="num">26.8</td><td class="num">26.9</td><td class="num">27.8</td><td class="num">26.9</td><td class="num">1.1</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">25.1</td><td class="num">24.9</td><td class="num">25.0</td><td class="num">29.1</td><td class="num">24.4</td><td class="num">4.8</td><td class="num">&sim;</td></tr></table>
+<h2>9. 부록 &mdash; P1P3L (repair + simplification), unseen</h2><h3>valid &amp; arrival &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">1.000</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num"><b>1.000</b></td><td class="num">0.000</td><td class="num"></td></tr></table>
+<h3>DTW&darr; (m) &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4968</b></td><td class="num"><b>4968</b></td><td class="num"><b>4968</b></td><td class="num">4981</td><td class="num"><b>4968</b></td><td class="num">14</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>3773</b></td><td class="num"><b>3773</b></td><td class="num"><b>3773</b></td><td class="num"><b>3773</b></td><td class="num"><b>3773</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>3869</b></td><td class="num">4118</td><td class="num">4214</td><td class="num">4125</td><td class="num">4299</td><td class="num">430</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>3633</b></td><td class="num">3644</td><td class="num">3709</td><td class="num">3680</td><td class="num">3714</td><td class="num">82</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4204</b></td><td class="num"><b>4204</b></td><td class="num"><b>4204</b></td><td class="num"><b>4204</b></td><td class="num"><b>4204</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>3849</b></td><td class="num"><b>3849</b></td><td class="num"><b>3849</b></td><td class="num"><b>3849</b></td><td class="num"><b>3849</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4148</td><td class="num"><b>3898</b></td><td class="num">4057</td><td class="num">3920</td><td class="num">4072</td><td class="num">250</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">3731</td><td class="num">3665</td><td class="num">3694</td><td class="num">3616</td><td class="num"><b>3588</b></td><td class="num">143</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4619</b></td><td class="num"><b>4619</b></td><td class="num"><b>4619</b></td><td class="num"><b>4619</b></td><td class="num"><b>4619</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>4139</b></td><td class="num"><b>4139</b></td><td class="num"><b>4139</b></td><td class="num"><b>4139</b></td><td class="num"><b>4139</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4257</td><td class="num"><b>4181</b></td><td class="num">4224</td><td class="num">4212</td><td class="num">4204</td><td class="num">76</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">3884</td><td class="num">3877</td><td class="num">3826</td><td class="num">3783</td><td class="num"><b>3721</b></td><td class="num">162</td><td class="num">&darr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4967</b></td><td class="num"><b>4967</b></td><td class="num"><b>4967</b></td><td class="num"><b>4967</b></td><td class="num"><b>4967</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>4266</b></td><td class="num"><b>4266</b></td><td class="num"><b>4266</b></td><td class="num"><b>4266</b></td><td class="num"><b>4266</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4377</td><td class="num">4336</td><td class="num"><b>4178</b></td><td class="num">4331</td><td class="num">4294</td><td class="num">199</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">3958</td><td class="num"><b>3868</b></td><td class="num">3904</td><td class="num">3887</td><td class="num">3870</td><td class="num">90</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>4385</b></td><td class="num"><b>4385</b></td><td class="num"><b>4385</b></td><td class="num">4435</td><td class="num"><b>4385</b></td><td class="num">50</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>4334</b></td><td class="num"><b>4334</b></td><td class="num"><b>4334</b></td><td class="num"><b>4334</b></td><td class="num"><b>4334</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">4039</td><td class="num">4049</td><td class="num">4069</td><td class="num"><b>3988</b></td><td class="num">4027</td><td class="num">81</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">4120</td><td class="num">3895</td><td class="num"><b>3851</b></td><td class="num">4018</td><td class="num">3926</td><td class="num">269</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">6362</td><td class="num">6362</td><td class="num">6362</td><td class="num"><b>6351</b></td><td class="num">6362</td><td class="num">11</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>6033</b></td><td class="num"><b>6033</b></td><td class="num"><b>6033</b></td><td class="num"><b>6033</b></td><td class="num"><b>6033</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">6516</td><td class="num"><b>6148</b></td><td class="num">6956</td><td class="num">6977</td><td class="num">6756</td><td class="num">829</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">5827</td><td class="num">5863</td><td class="num">6133</td><td class="num">6111</td><td class="num"><b>5729</b></td><td class="num">403</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">4342</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>5742</b></td><td class="num"><b>5742</b></td><td class="num"><b>5742</b></td><td class="num"><b>5742</b></td><td class="num"><b>5742</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>5185</b></td><td class="num"><b>5185</b></td><td class="num"><b>5185</b></td><td class="num"><b>5185</b></td><td class="num"><b>5185</b></td><td class="num">0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">5816</td><td class="num"><b>5558</b></td><td class="num">5746</td><td class="num">5659</td><td class="num">5841</td><td class="num">283</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">5293</td><td class="num">5155</td><td class="num">5100</td><td class="num"><b>5026</b></td><td class="num">5082</td><td class="num">267</td><td class="num">&searr;</td></tr></table>
+<h3>LCS &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>16.73</b></td><td class="num"><b>16.73</b></td><td class="num"><b>16.73</b></td><td class="num">16.72</td><td class="num"><b>16.73</b></td><td class="num">0.01</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>16.87</b></td><td class="num"><b>16.87</b></td><td class="num"><b>16.87</b></td><td class="num"><b>16.87</b></td><td class="num"><b>16.87</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num"><b>17.35</b></td><td class="num">17.02</td><td class="num">16.90</td><td class="num">17.11</td><td class="num">17.27</td><td class="num">0.45</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>17.09</b></td><td class="num">17.03</td><td class="num">16.93</td><td class="num">16.99</td><td class="num">16.86</td><td class="num">0.23</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>17.07</b></td><td class="num"><b>17.07</b></td><td class="num"><b>17.07</b></td><td class="num"><b>17.07</b></td><td class="num"><b>17.07</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>16.87</b></td><td class="num"><b>16.87</b></td><td class="num"><b>16.87</b></td><td class="num"><b>16.87</b></td><td class="num"><b>16.87</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">17.18</td><td class="num"><b>17.39</b></td><td class="num">17.30</td><td class="num">17.30</td><td class="num">17.11</td><td class="num">0.28</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">17.18</td><td class="num">17.22</td><td class="num">17.19</td><td class="num"><b>17.33</b></td><td class="num">17.30</td><td class="num">0.14</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>16.43</b></td><td class="num"><b>16.43</b></td><td class="num"><b>16.43</b></td><td class="num"><b>16.43</b></td><td class="num"><b>16.43</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>16.25</b></td><td class="num"><b>16.25</b></td><td class="num"><b>16.25</b></td><td class="num"><b>16.25</b></td><td class="num"><b>16.25</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">17.02</td><td class="num">16.92</td><td class="num">16.95</td><td class="num"><b>17.11</b></td><td class="num">17.08</td><td class="num">0.20</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">16.88</td><td class="num">16.95</td><td class="num">17.21</td><td class="num">17.18</td><td class="num"><b>17.26</b></td><td class="num">0.38</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>16.22</b></td><td class="num"><b>16.22</b></td><td class="num"><b>16.22</b></td><td class="num"><b>16.22</b></td><td class="num"><b>16.22</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>16.07</b></td><td class="num"><b>16.07</b></td><td class="num"><b>16.07</b></td><td class="num"><b>16.07</b></td><td class="num"><b>16.07</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">16.90</td><td class="num">17.02</td><td class="num"><b>17.28</b></td><td class="num">17.05</td><td class="num">16.99</td><td class="num">0.38</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">17.02</td><td class="num"><b>17.16</b></td><td class="num">17.07</td><td class="num">16.88</td><td class="num">17.04</td><td class="num">0.27</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>16.57</b></td><td class="num"><b>16.57</b></td><td class="num"><b>16.57</b></td><td class="num">16.57</td><td class="num"><b>16.57</b></td><td class="num">0.00</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>16.05</b></td><td class="num"><b>16.05</b></td><td class="num"><b>16.05</b></td><td class="num"><b>16.05</b></td><td class="num"><b>16.05</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">16.98</td><td class="num">16.86</td><td class="num"><b>17.21</b></td><td class="num"><b>17.21</b></td><td class="num">17.17</td><td class="num">0.34</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">16.76</td><td class="num">16.79</td><td class="num"><b>16.93</b></td><td class="num">16.75</td><td class="num">16.85</td><td class="num">0.18</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">15.02</td><td class="num">15.02</td><td class="num">15.02</td><td class="num"><b>15.03</b></td><td class="num">15.02</td><td class="num">0.00</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>14.82</b></td><td class="num"><b>14.82</b></td><td class="num"><b>14.82</b></td><td class="num"><b>14.82</b></td><td class="num"><b>14.82</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.01</td><td class="num"><b>15.49</b></td><td class="num">15.07</td><td class="num">15.01</td><td class="num">14.99</td><td class="num">0.50</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num"><b>15.00</b></td><td class="num">14.83</td><td class="num">14.78</td><td class="num">14.71</td><td class="num">14.99</td><td class="num">0.29</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">12.16</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num"><b>15.73</b></td><td class="num"><b>15.73</b></td><td class="num"><b>15.73</b></td><td class="num"><b>15.73</b></td><td class="num"><b>15.73</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num"><b>15.33</b></td><td class="num"><b>15.33</b></td><td class="num"><b>15.33</b></td><td class="num"><b>15.33</b></td><td class="num"><b>15.33</b></td><td class="num">0.00</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">15.74</td><td class="num">15.68</td><td class="num">15.74</td><td class="num"><b>15.92</b></td><td class="num">15.79</td><td class="num">0.23</td><td class="num">&sim;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">15.24</td><td class="num">15.24</td><td class="num">15.10</td><td class="num">15.15</td><td class="num"><b>15.35</b></td><td class="num">0.25</td><td class="num">&sim;</td></tr></table>
+<h3>gen_len &mdash; unseen</h3><table><tr><th>blk</th><th>구성</th><th class="num">n=10</th><th class="num">n=30</th><th class="num">n=50</th><th class="num">n=100</th><th class="num">n=150</th><th class="num">범위</th><th class="num" title="n 증가 방향의 추세: ↑/↓ 전 구간 일방, ↗/↘ 다수, ~ 혼재">추세</th></tr>
+<tr class="ref"><td rowspan=5>1</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">0.0</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">30.2</td><td class="num">30.3</td><td class="num">30.4</td><td class="num">30.3</td><td class="num">30.3</td><td class="num">0.2</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">28.8</td><td class="num">28.9</td><td class="num">28.8</td><td class="num">28.9</td><td class="num">28.9</td><td class="num">0.1</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>2</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">30.2</td><td class="num">30.2</td><td class="num">30.2</td><td class="num">30.2</td><td class="num">30.2</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">29.2</td><td class="num">29.2</td><td class="num">29.2</td><td class="num">29.2</td><td class="num">29.2</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">30.0</td><td class="num">29.8</td><td class="num">30.0</td><td class="num">29.9</td><td class="num">29.7</td><td class="num">0.3</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">29.0</td><td class="num">29.0</td><td class="num">29.0</td><td class="num">29.0</td><td class="num">28.9</td><td class="num">0.1</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>4</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">30.5</td><td class="num">30.5</td><td class="num">30.5</td><td class="num">30.5</td><td class="num">30.5</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">30.0</td><td class="num">29.9</td><td class="num">30.1</td><td class="num">29.9</td><td class="num">29.9</td><td class="num">0.2</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">28.3</td><td class="num">28.4</td><td class="num">28.4</td><td class="num">28.4</td><td class="num">28.4</td><td class="num">0.1</td><td class="num">&nearr;</td></tr>
+<tr class="ref"><td rowspan=5>8</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">30.7</td><td class="num">30.7</td><td class="num">30.7</td><td class="num">30.7</td><td class="num">30.7</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">29.3</td><td class="num">29.3</td><td class="num">29.3</td><td class="num">29.3</td><td class="num">29.3</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">30.1</td><td class="num">30.1</td><td class="num">30.0</td><td class="num">30.1</td><td class="num">30.1</td><td class="num">0.1</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">29.0</td><td class="num">28.8</td><td class="num">28.7</td><td class="num">28.6</td><td class="num">28.7</td><td class="num">0.4</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>16</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">30.1</td><td class="num">30.1</td><td class="num">30.1</td><td class="num">30.2</td><td class="num">30.1</td><td class="num">0.0</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">29.1</td><td class="num">29.1</td><td class="num">29.1</td><td class="num">29.1</td><td class="num">29.1</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">30.2</td><td class="num">30.0</td><td class="num">30.2</td><td class="num">30.1</td><td class="num">30.1</td><td class="num">0.3</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">29.0</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">28.8</td><td class="num">0.2</td><td class="num">&searr;</td></tr>
+<tr class="ref"><td rowspan=5>32</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">31.8</td><td class="num">31.8</td><td class="num">31.8</td><td class="num">31.8</td><td class="num">31.8</td><td class="num">0.0</td><td class="num">&sim;</td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">30.2</td><td class="num">30.2</td><td class="num">30.2</td><td class="num">30.2</td><td class="num">30.2</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">31.7</td><td class="num">31.6</td><td class="num">31.9</td><td class="num">31.8</td><td class="num">31.8</td><td class="num">0.3</td><td class="num">&searr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">30.1</td><td class="num">29.9</td><td class="num">30.0</td><td class="num">30.1</td><td class="num">29.8</td><td class="num">0.3</td><td class="num">&sim;</td></tr>
+<tr class="ref"><td rowspan=5>64</td><td>shortest path (BFS)</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">23.9</td><td class="num">0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">base</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="invar"><td title="n_is 를 쓰지 않는 arm">Adj-only</td><td class="num">29.6</td><td class="num">29.6</td><td class="num">29.6</td><td class="num">29.6</td><td class="num">29.6</td><td class="num">0.0</td><td class="num"></td></tr>
+<tr class="iw"><td>IW-only</td><td class="num">31.0</td><td class="num">30.9</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">31.1</td><td class="num">0.2</td><td class="num">&nearr;</td></tr>
+<tr class="iw"><td>Adj+IW</td><td class="num">29.4</td><td class="num">29.3</td><td class="num">29.3</td><td class="num">29.2</td><td class="num">29.1</td><td class="num">0.3</td><td class="num">&darr;</td></tr></table>
+</body></html>

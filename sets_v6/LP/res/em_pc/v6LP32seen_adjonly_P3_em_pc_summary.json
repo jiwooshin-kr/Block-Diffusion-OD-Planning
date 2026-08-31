@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP32seen_adjonly_P3",
+  "num_paths": 1000,
+  "num_valid": 992,
+  "valid_rate": 0.992,
+  "num_invalid": 8,
+  "invalid_rate": 0.008,
+  "num_em": 103,
+  "em_score": 0.103,
+  "pc_score": 0.17095110934761487
+}

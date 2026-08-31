@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP4seen_adjonly_P1",
+  "num_paths": 1000,
+  "num_valid": 999,
+  "valid_rate": 0.999,
+  "num_invalid": 1,
+  "invalid_rate": 0.001,
+  "num_em": 117,
+  "em_score": 0.117,
+  "pc_score": 0.22312785876478466
+}

@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP8seen_adj+modelD_raw",
+  "num_paths": 1000,
+  "num_valid": 985,
+  "valid_rate": 0.985,
+  "num_invalid": 15,
+  "invalid_rate": 0.015,
+  "num_em": 170,
+  "em_score": 0.17,
+  "pc_score": 0.27607390397379356
+}

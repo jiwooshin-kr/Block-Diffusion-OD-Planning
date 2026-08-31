@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE64seen_modelD_raw",
+  "num_paths": 1000,
+  "num_valid": 271,
+  "valid_rate": 0.271,
+  "num_invalid": 729,
+  "invalid_rate": 0.729,
+  "num_em": 65,
+  "em_score": 0.065,
+  "pc_score": 0.12518226634476634
+}

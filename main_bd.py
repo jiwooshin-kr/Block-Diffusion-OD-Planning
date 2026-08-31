@@ -19,6 +19,7 @@ from os.path import join
 
 import numpy as np
 import torch
+from scipy.spatial.distance import cdist
 
 from eval_shortest import evaluate_em_pc, success_arrival_rate
 from eval_shortest import refine as es_refine
@@ -35,16 +36,71 @@ def path_to_coords(path, G):
     return np.array([[G.nodes[v]["lat"], G.nodes[v]["lng"]] for v in path])
 
 
-def dtw_distance(a, b):
-    """Coordinate DTW (L1 ground distance, in ~km via *100 scaling)."""
-    n, m = len(a), len(b)
+EARTH_R_M = 6371000.0  # mean Earth radius, metres
+
+
+def haversine_matrix(a, b):
+    """Pairwise great-circle distance in METRES between two (L, 2) [lat, lng] arrays.
+
+    The cos(phi1)cos(phi2) factor shrinks longitude differences at higher latitude,
+    so the anisotropy of degree coordinates is handled inside the formula -- no
+    per-axis km/degree constant is needed. Checked against the linearised form
+    (|dlat| * 111132 m, |dlng| * 111320*cos(phi) m, then Euclidean): agreement to
+    within 0.59% over all 1,999 graph edges, which is the curvature of this 2.8 x
+    4.2 km area. Mean edge length is 84 m, useful for reading DTW values as
+    "how many links off".
+    """
+    la1 = np.deg2rad(a[:, 0])[:, None]
+    lo1 = np.deg2rad(a[:, 1])[:, None]
+    la2 = np.deg2rad(b[:, 0])[None, :]
+    lo2 = np.deg2rad(b[:, 1])[None, :]
+    h = (np.sin((la2 - la1) / 2.0) ** 2
+         + np.cos(la1) * np.cos(la2) * np.sin((lo2 - lo1) / 2.0) ** 2)
+    return 2.0 * EARTH_R_M * np.arcsin(np.sqrt(np.clip(h, 0.0, 1.0)))
+
+
+def dtw_distance(a, b, normalize="max", ground="haversine"):
+    """Coordinate DTW with the standard symmetric1 recursion (Sakoe & Chiba 1978).
+
+    a is the GENERATED path's coordinates (n, 2) and b the REFERENCE path's (m, 2),
+    each row a [lat, lng] pair. Both endpoints are force-aligned (D[0, 0] = 0 and
+    the value is read at D[n, m]), so failing to reach the destination is charged
+    heavily -- raw-variant DTW therefore mixes geometric error with arrival failure.
+
+    ground:
+      "haversine" great-circle distance in metres (default). Values are physical:
+                 a per-pair mean of 107.9 m is ~1.3 graph edges (mean edge 84 m).
+      "deg_l1"   the pre-2026-08-21 cost, (|dlat| + |dlng|) * 100 on raw degrees.
+                 Kept only to reproduce older numbers. It is NOT isotropic --
+                 longitude is over-weighted 1.33x at this latitude -- and its unit
+                 is meaningless (578 m of separation reads as 0.787).
+
+    normalize:
+      "max"   / max(n, m) (default). The per-aligned-pair average, since the warping
+              path length is 1.04 * max(n, m) in practice. CAVEAT: the divisor
+              depends on the GENERATED length, so a path that stays near the
+              reference is rewarded for being long. Always report mean generated
+              length beside it, and never compare across variants whose lengths
+              differ (e.g. raw vs P1P3, which adds ~5 nodes).
+      "ref"   / len(b). The divisor is the reference, identical for every arm, so it
+              cannot be gamed; it penalises extra length instead.
+      None    accumulated cost D[n, m], no divisor. Grows with the longer sequence.
+    """
+    C = (haversine_matrix(a, b) if ground == "haversine"
+         else cdist(a, b, metric="cityblock") * 100.0)
+    n, m = C.shape
     D = np.full((n + 1, m + 1), np.inf)
     D[0, 0] = 0.0
     for i in range(1, n + 1):
+        Ci, Dprev, Dcur = C[i - 1], D[i - 1], D[i]
         for j in range(1, m + 1):
-            cost = np.abs(a[i - 1] - b[j - 1]).sum() * 100
-            D[i, j] = cost + min(D[i - 1, j], D[i, j - 1], D[i - 1, j - 1])
-    return D[n, m] / max(n, m)
+            Dcur[j] = Ci[j - 1] + min(Dprev[j], Dcur[j - 1], Dprev[j - 1])
+    total = D[n, m]
+    if normalize is None:
+        return total
+    if normalize == "ref":
+        return total / m
+    return total / max(n, m)
 
 
 def lcs_length(a, b):

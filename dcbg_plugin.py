@@ -161,15 +161,21 @@ def corrupt_graph(paths, matrices, max_T, rng, END, PAD, block=64, max_len=128):
 # =====================================================================
 # D-CBG samplers (plug-in around a loaded BlockDiffusion model)
 # =====================================================================
-from models_seq.bd_models import get_block_causal_mask
+from models_seq.bd_models import get_block_causal_mask, simplify_path
 
 
 @torch.no_grad()
-def plan_dcbg_mask(model, origs, dests, clf, gamma, micro_bs=4096, use_approx=False, **kw):
+def plan_dcbg_mask(model, origs, dests, clf, gamma, micro_bs=4096, use_approx=False,
+                   adj_scn=None, **kw):
     """Mask kernel + exact D-CBG at the revealed position: the reveal target
     softmax(log p_theta + gamma * log p_phi(y | x_t^{l->k})) over the vocab
     (their _cbg_denoise absorbing branch, restricted -- exactly -- to the one
-    position first-hitting consumes)."""
+    position first-hitting consumes).
+    adj_scn: optional (V0, V0) float adjacency. Applies the SAME Lemma-3
+    legality mask as the IW side (bd_models.py::_denoise_block_mask_guided,
+    adj_prop branch) to the guided reveal distribution: vertex candidates
+    restricted to scenario-legal successors of the REVEALED left neighbour,
+    END always allowed, unmasked fallback when no legal mass remains."""
     origs = torch.as_tensor(origs).long().to(model.device)
     dests = torch.as_tensor(dests).long().to(model.device)
     b = origs.shape[0]
@@ -205,39 +211,86 @@ def plan_dcbg_mask(model, origs, dests, clf, gamma, micro_bs=4096, use_approx=Fa
                 block_logits[..., model.MASK] = -1e9
                 log_p = block_logits.log_softmax(dim=-1)          # (b, block, V)
 
-                sel = masked.float()
-                sel[~active] = 1.0
-                idx = torch.multinomial(sel, 1).squeeze(1)        # reveal position
+                # reveal position -- IDENTICAL rule to the IW side
+                # (models_seq/bd_models.py::_denoise_block_mask_guided._pick),
+                # so an order ablation is like-for-like across methods.
+                if kw.get("order", "first_hit") == "l2r":
+                    idx = masked.float().argmax(dim=1)            # left-most masked
+                else:
+                    sel = masked.float()
+                    sel[~active] = 1.0
+                    idx = torch.multinomial(sel, 1).squeeze(1)
                 pos = s - block + idx
 
                 V = model.backbone.vocab_size
+                lp = log_p[arange, idx]                            # (b, V)
+                legal = None
+                if adj_scn is not None:
+                    # Lemma-3 legality mask, same semantics as the IW side
+                    # (bd_models::_denoise_block_mask_guided, adj_prop): vertex
+                    # candidates restricted to scenario-legal successors of the
+                    # REVEALED left neighbour (always revealed under l2r);
+                    # END/PAD stay free, MASK excluded; a row whose legal set
+                    # carries no model mass falls back to unmasked.
+                    nv = model.n_vertex
+                    left = seq[arange, (pos - 1).clamp(min=0)]
+                    lv = (left < nv) & (pos >= 2)                  # pos 0/1 = (dst, ori)
+                    lsafe = torch.where(lv, left, torch.zeros_like(left))
+                    legal = torch.ones(b, V, dtype=torch.bool, device=seq.device)
+                    legal[:, :nv] = torch.where(lv[:, None], adj_scn[lsafe] > 0,
+                                                legal[:, :nv])
+                    legal[:, model.MASK] = False
+                    z0 = (lp.exp() * legal.float()).sum(-1)
+                    legal[z0 <= 1e-9] = True                       # unmasked fallback
+                    legal[:, model.MASK] = False
+
                 if use_approx:
                     # ---- their first-order (Taylor) approximation:
                     # ONE classifier forward+backward per reveal step ----
                     xt_one_hot = F.one_hot(seq, clf.vocab).to(torch.float)
                     with torch.enable_grad():
                         xt_one_hot.requires_grad_(True)
-                        lp_xt = clf.get_log_probs(xt_one_hot, t * 100.0)
+                        # classifier is trained on t in (0,1) (corrupt_mask);
+                        # only the diffusion backbone takes t*100
+                        lp_xt = clf.get_log_probs(xt_one_hot, t)
                         lp_xt[..., 1].sum().backward()
                         grad = xt_one_hot.grad
                     ratio = (grad - (xt_one_hot * grad).sum(dim=-1, keepdim=True)).detach()
                     full_lp = ratio + lp_xt[..., 1].detach()[:, None, None]   # (b, s, vocab)
                     clf_lp = full_lp[arange, pos][:, :V]
+                elif legal is not None:
+                    # ---- exact enumeration restricted to LEGAL candidates:
+                    # every other token is zeroed by the mask below anyway, so
+                    # the distribution is identical at ~V/(deg+2) fewer
+                    # classifier calls (~100 instead of ~30,600 per path) ----
+                    rows, cands = legal.nonzero(as_tuple=True)
+                    K = rows.shape[0]
+                    xt_j = seq[rows].clone()
+                    xt_j[torch.arange(K, device=seq.device), pos[rows]] = cands
+                    t_leg = t[rows]                  # classifier's training scale
+                    vals = torch.empty(K, device=model.device)
+                    for lo in range(0, K, micro_bs):
+                        hi = min(lo + micro_bs, K)
+                        vals[lo:hi] = clf.get_log_probs(xt_j[lo:hi], t_leg[lo:hi])[:, 1]
+                    clf_lp = torch.zeros(b, V, device=model.device)
+                    clf_lp[rows, cands] = vals
                 else:
                     # ---- their exact enumeration, at the reveal position ----
                     xt_jumps = seq.unsqueeze(1).repeat(1, V, 1)        # (b, V, s)
                     xt_jumps[arange[:, None], torch.arange(V, device=seq.device)[None, :].expand(b, V),
                              pos[:, None].expand(b, V)] = torch.arange(V, device=seq.device)[None, :].expand(b, V)
                     flat = xt_jumps.view(b * V, s)
-                    t_rep = (t * 100.0).repeat_interleave(V)
+                    t_rep = t.repeat_interleave(V)   # classifier's training scale is t in (0,1)
                     clf_lp = torch.empty(b * V, device=model.device)
                     for lo in range(0, b * V, micro_bs):
                         hi = min(lo + micro_bs, b * V)
                         clf_lp[lo:hi] = clf.get_log_probs(flat[lo:hi], t_rep[lo:hi])[:, 1]
                     clf_lp = clf_lp.view(b, V)
 
-                guided = log_p[arange, idx] + gamma * clf_lp       # (b, V)
+                guided = lp + gamma * clf_lp                       # (b, V)
                 guided[:, model.MASK] = -1e9
+                if legal is not None:
+                    guided[~legal] = -1e9            # hard mask == candidate restriction
                 tok = torch.multinomial(guided.softmax(dim=-1), 1).squeeze(1)
                 seq[arange[active], pos[active]] = tok[active]
 
@@ -269,6 +322,11 @@ def plan_dcbg_mask(model, origs, dests, clf, gamma, micro_bs=4096, use_approx=Fa
         paths.append([v for v in seq[i, o:hi].tolist() if v < model.n_vertex])
         hits.append(False)
     model.last_hits = hits
+    # Simplification (loop cut) ON by default, matching the IW side's
+    # plan()/plan_guided(). Generation runs to completion untouched; this only
+    # rewrites the returned paths, so the sampling distribution is unchanged.
+    if bool(kw.get("simplify", True)):
+        paths = [simplify_path(p) for p in paths]
     return paths
 
 
@@ -392,6 +450,8 @@ def plan_dcbg_graph(model, origs, dests, clf, gamma, **kw):
         paths.append([v for v in seq[i, o:hi].tolist() if v < model.n_vertex])
         hits.append(False)
     model.last_hits = hits
+    if bool(kw.get("simplify", True)):
+        paths = [simplify_path(p) for p in paths]
     return paths
 
 

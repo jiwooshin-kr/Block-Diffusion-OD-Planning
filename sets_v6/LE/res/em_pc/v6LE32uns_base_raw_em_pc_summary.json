@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE32uns_base_raw",
+  "num_paths": 1000,
+  "num_valid": 189,
+  "valid_rate": 0.189,
+  "num_invalid": 811,
+  "invalid_rate": 0.811,
+  "num_em": 35,
+  "em_score": 0.035,
+  "pc_score": 0.07449468921882715
+}

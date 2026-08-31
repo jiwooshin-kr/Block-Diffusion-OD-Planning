@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE32uns_modelD_P3",
+  "num_paths": 1000,
+  "num_valid": 283,
+  "valid_rate": 0.283,
+  "num_invalid": 717,
+  "invalid_rate": 0.717,
+  "num_em": 46,
+  "em_score": 0.046,
+  "pc_score": 0.10473985739199342
+}

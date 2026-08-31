@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE32seen_base_P1",
+  "num_paths": 1000,
+  "num_valid": 1000,
+  "valid_rate": 1.0,
+  "num_invalid": 0,
+  "invalid_rate": 0.0,
+  "num_em": 71,
+  "em_score": 0.071,
+  "pc_score": 0.16117017686021615
+}

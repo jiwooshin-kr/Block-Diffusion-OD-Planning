@@ -1,0 +1,11 @@
+{
+  "prefix": "BD_v6LP_normal_mask_blk8_bd_open_refine_nx",
+  "num_paths": 1000,
+  "num_valid": 498,
+  "valid_rate": 0.498,
+  "num_invalid": 502,
+  "invalid_rate": 0.502,
+  "num_em": 88,
+  "em_score": 0.088,
+  "pc_score": 0.13682109403346987
+}

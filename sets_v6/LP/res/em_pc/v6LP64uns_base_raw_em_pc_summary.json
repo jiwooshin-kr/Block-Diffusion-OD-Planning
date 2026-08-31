@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP64uns_base_raw",
+  "num_paths": 1000,
+  "num_valid": 186,
+  "valid_rate": 0.186,
+  "num_invalid": 814,
+  "invalid_rate": 0.814,
+  "num_em": 30,
+  "em_score": 0.03,
+  "pc_score": 0.05300164084461872
+}

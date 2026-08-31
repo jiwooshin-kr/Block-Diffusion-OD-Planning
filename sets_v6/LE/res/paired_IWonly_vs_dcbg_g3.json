@@ -1,0 +1,204 @@
+{
+  "arm_a": "modelD",
+  "arm_b": "dcbg@g3",
+  "variant": "raw",
+  "metric": "valid_and_arrival",
+  "rows": {
+    "seen_blk1": {
+      "a": 0.407,
+      "b": 0.533,
+      "delta": -0.126,
+      "ci95": [
+        -0.154,
+        -0.097
+      ],
+      "b_only": 52,
+      "c_only": 178,
+      "mcnemar_p": 2.5103312743326197e-17,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk2": {
+      "a": 0.403,
+      "b": 0.578,
+      "delta": -0.175,
+      "ci95": [
+        -0.206,
+        -0.142
+      ],
+      "b_only": 56,
+      "c_only": 231,
+      "mcnemar_p": 2.0745723608148388e-26,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk4": {
+      "a": 0.385,
+      "b": 0.559,
+      "delta": -0.174,
+      "ci95": [
+        -0.204,
+        -0.144
+      ],
+      "b_only": 49,
+      "c_only": 223,
+      "mcnemar_p": 1.0878799467287223e-27,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk8": {
+      "a": 0.366,
+      "b": 0.559,
+      "delta": -0.193,
+      "ci95": [
+        -0.227,
+        -0.159
+      ],
+      "b_only": 65,
+      "c_only": 258,
+      "mcnemar_p": 2.3482570679884955e-28,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk16": {
+      "a": 0.292,
+      "b": 0.519,
+      "delta": -0.227,
+      "ci95": [
+        -0.259,
+        -0.194
+      ],
+      "b_only": 51,
+      "c_only": 278,
+      "mcnemar_p": 5.7441367027321874e-39,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk32": {
+      "a": 0.245,
+      "b": 0.497,
+      "delta": -0.252,
+      "ci95": [
+        -0.287,
+        -0.219
+      ],
+      "b_only": 56,
+      "c_only": 308,
+      "mcnemar_p": 2.777720040810702e-43,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk64": {
+      "a": 0.165,
+      "b": 0.371,
+      "delta": -0.206,
+      "ci95": [
+        -0.238,
+        -0.174
+      ],
+      "b_only": 55,
+      "c_only": 261,
+      "mcnemar_p": 3.067534370526171e-33,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk1": {
+      "a": 0.386,
+      "b": 0.55,
+      "delta": -0.164,
+      "ci95": [
+        -0.193,
+        -0.135
+      ],
+      "b_only": 42,
+      "c_only": 206,
+      "mcnemar_p": 3.654917022903566e-27,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk2": {
+      "a": 0.397,
+      "b": 0.58,
+      "delta": -0.183,
+      "ci95": [
+        -0.213025,
+        -0.15297500000000036
+      ],
+      "b_only": 48,
+      "c_only": 231,
+      "mcnemar_p": 6.978080747775869e-30,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk4": {
+      "a": 0.379,
+      "b": 0.533,
+      "delta": -0.154,
+      "ci95": [
+        -0.185,
+        -0.124
+      ],
+      "b_only": 59,
+      "c_only": 213,
+      "mcnemar_p": 1.2740334745752781e-21,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk8": {
+      "a": 0.373,
+      "b": 0.533,
+      "delta": -0.16,
+      "ci95": [
+        -0.192,
+        -0.128
+      ],
+      "b_only": 61,
+      "c_only": 221,
+      "mcnemar_p": 1.8357569945032473e-22,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk16": {
+      "a": 0.296,
+      "b": 0.514,
+      "delta": -0.218,
+      "ci95": [
+        -0.251,
+        -0.185
+      ],
+      "b_only": 54,
+      "c_only": 272,
+      "mcnemar_p": 3.89648907269505e-36,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk32": {
+      "a": 0.243,
+      "b": 0.478,
+      "delta": -0.235,
+      "ci95": [
+        -0.268,
+        -0.202
+      ],
+      "b_only": 51,
+      "c_only": 286,
+      "mcnemar_p": 8.413396042263034e-41,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk64": {
+      "a": 0.165,
+      "b": 0.352,
+      "delta": -0.187,
+      "ci95": [
+        -0.219,
+        -0.155
+      ],
+      "b_only": 56,
+      "c_only": 243,
+      "mcnemar_p": 6.331007597876037e-29,
+      "n": 1000,
+      "lower_better": false
+    }
+  }
+}

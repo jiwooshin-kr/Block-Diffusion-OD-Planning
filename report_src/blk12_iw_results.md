@@ -2,7 +2,7 @@
 
 - 평가: `porto_v3_normal` except_0 reserved 1,000 pairs, seed 7, n_is=100
 - 모델: `BD_porto_v3_normal_mask_blk{1,2}_v2_bd.pth`
-- 스크립트: [run_blk12_datadisc.sh](../run_blk12_datadisc.sh) (data-neg), [run_blk12_modeldisc.sh](../run_blk12_modeldisc.sh) (model-neg)
+- 스크립트: [scripts/run_blk12_datadisc.sh](../run_blk12_datadisc.sh) (data-neg), [scripts/run_blk12_modeldisc.sh](../run_blk12_modeldisc.sh) (model-neg)
 - 열: base / IW(raw) / adj+IW(raw) / IW+P1P3 / adj+IW+P1P3. valid·arrival·EM·PC 모두 기록.
 - 주: 로그의 `modelD` 라벨은 three_way_postproc의 guided config 이름일 뿐, disc의 negative 종류는 아래 표 제목 기준.
 

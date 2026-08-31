@@ -1,0 +1,284 @@
+\documentclass[11pt]{article}
+
+% ---- xelatex + Korean ----
+\usepackage{kotex}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=blue!55!black,urlcolor=teal]{hyperref}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\pth}{p_\theta}
+\newcommand{\qexc}{q}
+\newcommand{\ESS}{\mathrm{ESS}}
+\DeclareMathOperator{\supp}{supp}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\theoremstyle{plain}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{remark}{Remark}
+\newtheorem{assumption}{Assumption}
+
+\title{IW guidance의 $\gamma$-tempering: 수학적 정식화\\
+\large 가중치 지수 $w_\gamma$가 정의하는 목표 분포와 그 성질}
+\author{}
+\date{2026-07-31}
+
+\begin{document}
+\maketitle
+
+\noindent
+이 노트는 다음 질문에 답한다: \emph{D-CBG의 guidance 세기 $\gamma$처럼, 우리 IW guidance의
+가중치도 하이퍼파라미터로 키울 수 있는가? 그때 샘플러가 겨냥하는 분포를 수학적으로 정의할 수
+있는가?} 답은 둘 다 ``예''이며, 해당 파라미터는 코드에 이미 존재한다
+(\code{bd\_models.py::plan\_guided}의 \code{w\_gamma}; 본 기록의 모든 실험은
+$\gamma_w = 1$ 고정). 아래에서 $\gamma \equiv \gamma_w$로 쓴다.
+
+\section{설정}
+
+이산 상태공간 $\mathcal{X}$ (한 reveal 위치에서는 vocab, 블록 단위로는 블록 후보 공간) 위에
+두 분포를 둔다: 참조 분포 $\pth$ (backbone이 제안하는 분포)와 목표 분포 $\qexc$
+(시나리오 조건 경로 분포). 판별자 $D$는 양성 $\sim \qexc$, 음성 $\sim \pth$의 균형
+표본으로 학습된 이진 분류기이고, 그 로짓을 $\ell(x)$라 한다.
+
+\begin{assumption}[이상적 판별자]\label{as:ideal}
+균형 학습의 Bayes 최적해에서
+\[
+D^*(x) = \frac{\qexc(x)}{\qexc(x) + \pth(x)}, \qquad
+\ell^*(x) = \log\frac{D^*(x)}{1 - D^*(x)} = \log\frac{\qexc(x)}{\pth(x)}.
+\]
+즉 로짓은 밀도비(density ratio)의 로그이다. 이하의 명제는 $\ell = \ell^*$일 때의 진술이고,
+학습된 $\ell \approx \ell^*$에서는 근사적으로 성립한다.
+\end{assumption}
+
+우리의 guided reveal은 self-normalized importance sampling (SNIS)이다: 후보
+$x^{(1)},\dots,x^{(n)} \overset{iid}{\sim} \pth$ ($n = n_{is} = 100$)를 뽑고, 가중치
+\[
+w_i \;=\; \exp\!\bigl(\gamma\,\ell(x^{(i)})\bigr)
+\;=\;\Bigl(\tfrac{D}{1-D}(x^{(i)})\Bigr)^{\gamma}
+\]
+로 재가중한 뒤, 정규화된 가중 평균 $\bar{x}_0 = \sum_i \tilde{w}_i\, x^{(i)}$
+($\tilde{w}_i = w_i / \sum_j w_j$)를 reveal 목표로 쓴다. 본 기록은 $\gamma = 1$이다.
+
+\section{$\gamma$가 정의하는 목표 분포}
+
+\begin{definition}[geometric bridge / tempered 목표]\label{def:pgamma}
+$\gamma \ge 0$에 대해
+\[
+p_\gamma(x) \;\coloneqq\; \frac{\qexc(x)^{\gamma}\, \pth(x)^{1-\gamma}}{Z_\gamma},
+\qquad
+Z_\gamma = \sum_{x \in \supp \pth} \qexc(x)^{\gamma} \pth(x)^{1-\gamma}.
+\]
+$\mathcal{X}$가 유한하므로 $Z_\gamma$는 항상 유한하고, $Z_\gamma > 0$인 한 $p_\gamma$는
+잘 정의된 분포이다.
+\end{definition}
+
+\begin{proposition}[임의의 $\gamma$에서의 SNIS 일치성]\label{prop:snis}
+가정 \ref{as:ideal} 하에서, 임의의 유계 $f$에 대해
+\[
+\frac{\sum_{i=1}^{n} w_i\, f(x^{(i)})}{\sum_{i=1}^{n} w_i}
+\;\xrightarrow[n \to \infty]{a.s.}\;
+\mathbb{E}_{p_\gamma}[f(x)].
+\]
+즉 $\gamma$-가중 SNIS 샘플러가 겨냥하는 분포는 정확히 $p_\gamma$이다.
+\end{proposition}
+
+\begin{proof}
+대수의 법칙으로 분자 $\tfrac1n\sum_i w_i f(x^{(i)}) \to
+\mathbb{E}_{\pth}\!\bigl[f(x)\,(\qexc/\pth)^{\gamma}(x)\bigr]
+= \sum_x f(x)\, \qexc^{\gamma} \pth^{1-\gamma}(x) = Z_\gamma\, \mathbb{E}_{p_\gamma}[f]$,
+분모 $\tfrac1n\sum_i w_i \to Z_\gamma$. 두 극한의 비가 결과를 준다.
+\end{proof}
+
+\begin{corollary}[특수값]\label{cor:special}
+\emph{(i)} $\gamma = 0$: $p_0 = \pth$ (guidance 꺼짐).
+\emph{(ii)} $\gamma = 1$: $p_1 = \qexc$ --- 현재 기록의 추정량이 겨냥하는 분포
+(기존 SNIS 일치성의 재확인).
+\emph{(iii)} $0 < \gamma < 1$: $\pth$와 $\qexc$ 사이의 geometric interpolation.
+\emph{(iv)} $\gamma > 1$: $\qexc$를 지나 밀도비가 큰 영역으로 sharpening하는
+extrapolation (tempering).
+\end{corollary}
+
+\section{목표 분포는 $\gamma$에 따라 \emph{정확히 어떻게} 움직이는가}
+
+정의 \ref{def:pgamma}를 다시 쓰면, $\{p_\gamma\}_{\gamma \ge 0}$는 $\pth$를 지나는
+\textbf{exponential tilting 족}이다:
+\[
+p_\gamma(x) \;\propto\; \pth(x)\, e^{\gamma\,\ell(x)},
+\qquad \ell(x) = \log\frac{\qexc(x)}{\pth(x)},
+\]
+즉 로그밀도가 $\gamma$에 대해 \emph{선형}으로 움직이는 1-파라미터 지수족이고, $\gamma$가
+natural parameter, $\ell$이 충분통계량이다. 이 관점에서 ``분포가 어떻게 바뀌는가''는
+닫힌 형태로 완전히 답해진다.
+
+\begin{proposition}[이동의 방향과 속도]\label{prop:move}
+\emph{(i) 점별 이동:}
+\[
+\frac{\partial}{\partial \gamma} \log p_\gamma(x)
+= \ell(x) - \mathbb{E}_{p_\gamma}[\ell].
+\]
+즉 매 순간, 밀도비가 그 시점의 평균보다 높은 상태는 질량을 얻고 낮은 상태는 잃는다.
+
+\emph{(ii) 두 상태 사이의 상대 확률:}
+\[
+\frac{p_\gamma(x)}{p_\gamma(x')}
+= \frac{\pth(x)}{\pth(x')} \cdot e^{\gamma\,(\ell(x) - \ell(x'))}
+\]
+--- $\gamma$가 1 늘 때마다 로짓 차이만큼 지수적으로 벌어진다.
+
+\emph{(iii) 단조성:} $\dfrac{d}{d\gamma}\, \mathbb{E}_{p_\gamma}[\ell]
+= \mathrm{Var}_{p_\gamma}(\ell) \ \ge\ 0$.
+즉 목표 분포가 보는 평균 밀도비는 $\gamma$에 대해 단조 증가하고, 증가 속도는 그 시점의
+로짓 분산이다 (분산이 죽으면 --- 한 상태에 질량이 몰리면 --- 이동도 멈춘다).
+
+\emph{(iv) 극한:} $\gamma \to \infty$에서 $p_\gamma$는
+$\argmax_x \ell(x)$ (지지집합 $\supp\pth$ 안에서 밀도비가 최대인 상태들)의 균등분포로
+수렴한다.
+\end{proposition}
+
+\begin{proof}
+(i),(iii)은 지수족의 표준 항등식($\log Z_\gamma$의 1,2차 도함수가 $\ell$의 평균·분산).
+(ii)는 정의에서 즉시. (iv)는 (ii)에서 $\ell$ 최대 상태 대비 나머지의 비가 0으로 가는
+것으로부터.
+\end{proof}
+
+\begin{remark}[$\gamma > 1$이 향하는 곳은 $\qexc$의 mode가 아니다]\label{rem:notq}
+(iv)가 주는 주의점: $\gamma$를 계속 키우면 분포는 $\qexc$가 큰 곳이 아니라
+\emph{밀도비 $\qexc/\pth$가 큰 곳}으로 간다. 수치 예로, 상태 3개에
+$\pth = (0.70,\, 0.25,\, 0.05)$, $\qexc = (0.20,\, 0.50,\, 0.30)$이면
+(밀도비 $0.29,\ 2.0,\ 6.0$):
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+ & $x_1$ & $x_2$ & $x_3$ \\
+\midrule
+$\gamma = 0$ \; ($= \pth$)      & 0.700 & 0.250 & 0.050 \\
+$\gamma = 0.5$                  & 0.440 & 0.416 & 0.144 \\
+$\gamma = 1$ \; ($= \qexc$)     & 0.200 & 0.500 & 0.300 \\
+$\gamma = 2$                    & 0.020 & 0.350 & 0.630 \\
+$\gamma = 4$                    & 0.000 & 0.058 & 0.942 \\
+\bottomrule
+\end{tabular}
+\end{center}
+$\gamma = 1$까지는 정확히 $\qexc$로 가지만, 그 뒤로는 $\qexc$의 mode인 $x_2$
+($\qexc = 0.5$)가 아니라 $\pth$ 대비 가장 ``이례적인'' $x_3$ (비 $= 6$)에 질량이
+몰린다. 우리 과제로 번역하면: $\gamma > 1$은 ``시나리오에서 상대적으로 가장 그럴듯해진
+경로''를 과대표집한다 --- validity를 밀어올리되 reference 경로 분포에서 멀어질 수 있는,
+\S5.8--5.9에서 관측된 validity$\uparrow$/arrival$\downarrow$ 맞교환의 분포적 근원이다.
+\end{remark}
+
+\begin{remark}[D-CBG의 $\gamma$와의 대응]\label{rem:dcbg}
+D-CBG는 위치별 posterior를 $p_\phi(y\,|\,x)^{\gamma}$로 기울인다. 가정 \ref{as:ideal}의
+표기로 $p_\phi(y{=}1\,|\,x) = \sigma(\ell(x))$이므로 두 방법의 tilt는
+\[
+\text{IW: } e^{\gamma \ell(x)}, \qquad
+\text{D-CBG: } \sigma(\ell(x))^{\gamma} = \Bigl(\tfrac{e^{\ell}}{1+e^{\ell}}\Bigr)^{\gamma}.
+\]
+둘 다 $\ell$에 단조이므로 \emph{후보 순위는 동일}하게 움직이지만 꼬리 거동이 다르다:
+$\sigma(\ell)^\gamma$는 $\ell \gg 0$에서 1로 포화해 \emph{나쁜 후보의 억제}만 무한히
+강해지는 반면, $e^{\gamma\ell}$은 위로도 계속 증가해 \emph{좋은 후보의 증폭}까지 한다.
+$\gamma = 1$에서 IW는 $\qexc$를 정확히 겨냥하고(따름정리 \ref{cor:special}), D-CBG는
+Bayes posterior tilt로서 정확하다. $\gamma \ne 1$에서는 둘 다 Bayes를 떠나 서로 다른
+파라미터화의 tempered 족이 된다 --- 어느 쪽도 ``더 원리적''이지 않고, 같은 종류의
+하이퍼파라미터이다.
+\end{remark}
+
+\section{유한 표본에서 일어나는 일: ESS가 $\gamma$의 상한을 정한다}
+
+명제 \ref{prop:snis}는 $n \to \infty$의 진술이다. 유한한 $n = 100$에서 SNIS 추정량의
+편향은 유효표본크기
+\[
+\ESS \;=\; \frac{\bigl(\sum_i w_i\bigr)^2}{\sum_i w_i^2} \;\in\; [1, n]
+\]
+로 통제되며(표준 결과: 편향 $= O(1/\ESS)$), $\gamma$를 키우면 $\ESS$가 떨어진다.
+
+\begin{proposition}[유계 로짓 하의 ESS 하한]\label{prop:ess}
+$|\ell(x)| \le L$ (우리 판별자는 $\tanh$ bound로 $L = 4$)이면 $w_{\max}/w_{\min} \le
+e^{2\gamma L}$이고,
+\[
+\ESS \;\ge\; n\, e^{-2\gamma L}.
+\]
+또한 후보들 위에서 $\ell$의 분산을 $\sigma_\ell^2$라 하면 log-normal 근사에서
+$\ESS \approx n\, e^{-\gamma^2 \sigma_\ell^2}$: ESS는 $\gamma$에 대해 대략
+가우시안 꼴로 감소한다.
+\end{proposition}
+
+\begin{proof}[증명 (하한)]
+$\ESS = (\sum w)^2/\sum w^2 \ge (n\,w_{\min})^2 / (n\,w_{\max}^2)
+= n\,(w_{\min}/w_{\max})^2 \cdot (w_{\max}/w_{\min})
+\ge n\, e^{-2\gamma L}$. \footnote{중간 부등식은 $\sum w \ge n w_{\min}$,
+$\sum w^2 \le n w_{\max}^2$에서. 근사식은 $\log w_i \sim
+\mathcal{N}(\gamma\mu_\ell, \gamma^2\sigma_\ell^2)$일 때
+$\ESS/n \approx e^{-\gamma^2\sigma_\ell^2}$인 표준 계산.}
+\end{proof}
+
+\begin{proposition}[$\gamma \to \infty$ 극한]\label{prop:limit}
+고정된 후보 집합 $\{x^{(i)}\}_{i=1}^{n}$에서 $\gamma \to \infty$이면 (동률이 없는 한)
+$\tilde{w} \to$ one-hot at $\argmax_i \ell(x^{(i)})$. 즉 샘플러는 \emph{판별자로
+재순위한 best-of-$n$}으로 퇴화한다.
+\end{proposition}
+
+이 극한은 실험 기록의 E1(②) arm과 정확히 연결된다: $\gamma$축의 한쪽 끝($\gamma=0$)은
+unguided base, $\gamma=1$은 현행 guidance, $\gamma=\infty$는 discriminator-reranked
+best-of-100이다. $\gamma$ 스윕은 이 세 지점을 잇는 연속 곡선을 그리는 셈이다.
+
+\begin{remark}[실측 여유]
+$\gamma = 1$에서 측정된 reveal당 평균 ESS는 $\approx 95$--$99.7/100$ (v4 보고서
+\S5.4)이다. 명제 \ref{prop:ess}의 근사로 역산하면 $\sigma_\ell^2 \lesssim 0.05$
+수준이므로, $\ESS \ge 50$을 유지하는 조건 $\gamma^2 \sigma_\ell^2 \le \log 2$는
+$\gamma \lesssim 3.7$--$8$ 범위를 허용한다. 즉 $\gamma \in \{2, 4\}$ 정도는 편향 폭발
+없이 시도할 수 있고, 실제 상한은 ESS 로그로 실측하면 된다.
+\end{remark}
+
+\section{기존 구성요소와의 정합성}
+
+\begin{remark}[Lemma 3 마스킹은 모든 $\gamma > 0$에서 그대로 성립]
+Lemma 3의 논증은 ``제외되는 후보는 목표 분포에서 가중치 0''이다. 시나리오-불법 후보
+$x$는 $\qexc(x) = 0$이므로 임의의 $\gamma > 0$에서
+$\qexc(x)^{\gamma}\pth(x)^{1-\gamma} = 0$, 즉 $p_\gamma(x) = 0$. 따라서 인접성 제약
+제안(adj\_prop)과 $\gamma$-tempering의 결합은 $\gamma = 1$일 때와 동일한 이유로
+정확(exact)하다.
+\end{remark}
+
+\begin{remark}[제안분포 보정은 지수화되지 않는다]
+ancestral 후보(E6)처럼 제안이 $\pth$가 아니라 $r(x)$일 때 올바른 가중치는
+\[
+w_i = \Bigl(\tfrac{\qexc}{\pth}\Bigr)^{\gamma}\!(x^{(i)})
+\cdot \frac{\pth(x^{(i)})}{r(x^{(i)})}
+\]
+이다: tempering은 \emph{목표}에 대한 조작이므로 밀도비 항에만 $\gamma$가 붙고, 제안
+보정항은 항상 1승이다. 현재 구현 \code{g = w\_gamma * dlogits + log\_a}가 정확히 이
+형태이므로 코드 수정 없이 성립한다.
+\end{remark}
+
+\begin{remark}[블록/lookahead 구조 불변]
+$\gamma$는 스칼라 가중치 $w_i$의 정의만 바꾼다. 블록 전체 후보에 가중치를 broadcast하고
+한 위치만 커밋하는 구조, 커밋 토큰의 tilt가 $\mathbb{E}[w \mid x_k = v]$ (한 수 앞
+rollout의 주변화)라는 해석, ESS 계측 --- 모두 $\gamma = 1$일 때와 동일한 형태로
+유지된다.
+\end{remark}
+
+\section{요약}
+
+\begin{itemize}[leftmargin=1.4em]
+\item IW 가중치의 지수 $\gamma$는 D-CBG의 $\gamma$와 같은 지위의 하이퍼파라미터이며,
+샘플러가 겨냥하는 분포는 닫힌 형태로 정의된다:
+$p_\gamma \propto \qexc^{\gamma} \pth^{1-\gamma}$ (명제 \ref{prop:snis}).
+\item $\gamma = 0 \to \pth$, $\gamma = 1 \to \qexc$(현행), $\gamma \to \infty \to$
+판별자 best-of-$n$ (명제 \ref{prop:limit}).
+\item D-CBG와의 차이는 tilt의 꼬리 거동뿐이다: $\sigma(\ell)^\gamma$(포화) 대
+$e^{\gamma\ell}$(비포화) --- 순위는 동일하게 움직인다 (Remark \ref{rem:dcbg}).
+\item 유한 $n$에서 실질적 상한은 ESS가 정하며(편향 $O(1/\ESS)$, 명제 \ref{prop:ess}),
+현재 측정치 기준 $\gamma \in \{2, 4\}$는 안전 범위로 추정된다 --- 스윕 시 ESS를 함께
+기록하면 상한을 실측으로 확정할 수 있다.
+\item Lemma 3 마스킹·제안 보정·블록 lookahead 구조 모두 $\gamma$-일반화에서 형태
+그대로 유지된다.
+\end{itemize}
+
+\end{document}

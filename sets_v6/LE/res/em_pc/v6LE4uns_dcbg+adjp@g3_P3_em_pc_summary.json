@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE4uns_dcbg+adjp@g3_P3",
+  "num_paths": 1000,
+  "num_valid": 985,
+  "valid_rate": 0.985,
+  "num_invalid": 15,
+  "invalid_rate": 0.015,
+  "num_em": 123,
+  "em_score": 0.123,
+  "pc_score": 0.20414497649891025
+}

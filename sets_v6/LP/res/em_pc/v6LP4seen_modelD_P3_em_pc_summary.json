@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP4seen_modelD_P3",
+  "num_paths": 1000,
+  "num_valid": 417,
+  "valid_rate": 0.417,
+  "num_invalid": 583,
+  "invalid_rate": 0.583,
+  "num_em": 100,
+  "em_score": 0.1,
+  "pc_score": 0.17235713730713728
+}

@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP8uns_dcbg@g3_P1P3",
+  "num_paths": 1000,
+  "num_valid": 1000,
+  "valid_rate": 1.0,
+  "num_invalid": 0,
+  "invalid_rate": 0.0,
+  "num_em": 106,
+  "em_score": 0.106,
+  "pc_score": 0.2126661304066748
+}

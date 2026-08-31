@@ -1,0 +1,66 @@
+[
+  {
+    "idx": 14,
+    "start": null,
+    "end": null,
+    "gen_path": [
+      466
+    ],
+    "gen_len": 1,
+    "reason": "path_length_less_than_2",
+    "invalid_nodes": [
+      466
+    ],
+    "invalid_edges": [],
+    "shortest_len": null,
+    "shortest_lengths_same_od": []
+  },
+  {
+    "idx": 104,
+    "start": null,
+    "end": null,
+    "gen_path": [
+      142
+    ],
+    "gen_len": 1,
+    "reason": "path_length_less_than_2",
+    "invalid_nodes": [
+      142
+    ],
+    "invalid_edges": [],
+    "shortest_len": null,
+    "shortest_lengths_same_od": []
+  },
+  {
+    "idx": 510,
+    "start": null,
+    "end": null,
+    "gen_path": [
+      688
+    ],
+    "gen_len": 1,
+    "reason": "path_length_less_than_2",
+    "invalid_nodes": [
+      688
+    ],
+    "invalid_edges": [],
+    "shortest_len": null,
+    "shortest_lengths_same_od": []
+  },
+  {
+    "idx": 598,
+    "start": null,
+    "end": null,
+    "gen_path": [
+      375
+    ],
+    "gen_len": 1,
+    "reason": "path_length_less_than_2",
+    "invalid_nodes": [
+      375
+    ],
+    "invalid_edges": [],
+    "shortest_len": null,
+    "shortest_lengths_same_od": []
+  }
+]

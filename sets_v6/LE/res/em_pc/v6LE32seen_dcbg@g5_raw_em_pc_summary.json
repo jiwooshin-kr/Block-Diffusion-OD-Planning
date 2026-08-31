@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LE32seen_dcbg@g5_raw",
+  "num_paths": 1000,
+  "num_valid": 803,
+  "valid_rate": 0.803,
+  "num_invalid": 197,
+  "invalid_rate": 0.197,
+  "num_em": 108,
+  "em_score": 0.108,
+  "pc_score": 0.1883303385555669
+}

@@ -1,0 +1,11 @@
+{
+  "prefix": "v6LP64uns_modelD_P3",
+  "num_paths": 1000,
+  "num_valid": 297,
+  "valid_rate": 0.297,
+  "num_invalid": 703,
+  "invalid_rate": 0.703,
+  "num_em": 45,
+  "em_score": 0.045,
+  "pc_score": 0.09174162921771428
+}

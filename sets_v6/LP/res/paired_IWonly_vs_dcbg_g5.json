@@ -1,0 +1,204 @@
+{
+  "arm_a": "modelD",
+  "arm_b": "dcbg@g5",
+  "variant": "raw",
+  "metric": "valid_and_arrival",
+  "rows": {
+    "seen_blk1": {
+      "a": 0.427,
+      "b": 0.752,
+      "delta": -0.325,
+      "ci95": [
+        -0.359,
+        -0.291
+      ],
+      "b_only": 39,
+      "c_only": 364,
+      "mcnemar_p": 3.212882429263345e-67,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk2": {
+      "a": 0.416,
+      "b": 0.737,
+      "delta": -0.321,
+      "ci95": [
+        -0.355,
+        -0.287
+      ],
+      "b_only": 44,
+      "c_only": 365,
+      "mcnemar_p": 4.8335736073943496e-64,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk4": {
+      "a": 0.402,
+      "b": 0.715,
+      "delta": -0.313,
+      "ci95": [
+        -0.347,
+        -0.28
+      ],
+      "b_only": 44,
+      "c_only": 357,
+      "mcnemar_p": 4.951658833734399e-62,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk8": {
+      "a": 0.359,
+      "b": 0.703,
+      "delta": -0.344,
+      "ci95": [
+        -0.379,
+        -0.31
+      ],
+      "b_only": 36,
+      "c_only": 380,
+      "mcnemar_p": 1.429171446653308e-73,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk16": {
+      "a": 0.259,
+      "b": 0.604,
+      "delta": -0.345,
+      "ci95": [
+        -0.38,
+        -0.31
+      ],
+      "b_only": 46,
+      "c_only": 391,
+      "mcnemar_p": 2.8856916737167043e-69,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk32": {
+      "a": 0.227,
+      "b": 0.595,
+      "delta": -0.368,
+      "ci95": [
+        -0.403,
+        -0.3339750000000004
+      ],
+      "b_only": 40,
+      "c_only": 408,
+      "mcnemar_p": 6.986031742559937e-78,
+      "n": 1000,
+      "lower_better": false
+    },
+    "seen_blk64": {
+      "a": 0.23,
+      "b": 0.497,
+      "delta": -0.267,
+      "ci95": [
+        -0.3,
+        -0.233
+      ],
+      "b_only": 50,
+      "c_only": 317,
+      "mcnemar_p": 1.3415828493328305e-48,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk1": {
+      "a": 0.423,
+      "b": 0.715,
+      "delta": -0.292,
+      "ci95": [
+        -0.324,
+        -0.259
+      ],
+      "b_only": 34,
+      "c_only": 326,
+      "mcnemar_p": 5.284960507826603e-61,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk2": {
+      "a": 0.401,
+      "b": 0.719,
+      "delta": -0.318,
+      "ci95": [
+        -0.352,
+        -0.284
+      ],
+      "b_only": 41,
+      "c_only": 359,
+      "mcnemar_p": 1.511506809192735e-64,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk4": {
+      "a": 0.427,
+      "b": 0.724,
+      "delta": -0.297,
+      "ci95": [
+        -0.33,
+        -0.262
+      ],
+      "b_only": 45,
+      "c_only": 342,
+      "mcnemar_p": 1.1918881008232756e-57,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk8": {
+      "a": 0.384,
+      "b": 0.723,
+      "delta": -0.339,
+      "ci95": [
+        -0.372,
+        -0.306
+      ],
+      "b_only": 35,
+      "c_only": 374,
+      "mcnemar_p": 9.287603106456784e-73,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk16": {
+      "a": 0.252,
+      "b": 0.582,
+      "delta": -0.33,
+      "ci95": [
+        -0.364,
+        -0.293
+      ],
+      "b_only": 57,
+      "c_only": 387,
+      "mcnemar_p": 2.3640123545628723e-61,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk32": {
+      "a": 0.225,
+      "b": 0.603,
+      "delta": -0.378,
+      "ci95": [
+        -0.412,
+        -0.342
+      ],
+      "b_only": 39,
+      "c_only": 417,
+      "mcnemar_p": 5.461749188368924e-81,
+      "n": 1000,
+      "lower_better": false
+    },
+    "unseen_blk64": {
+      "a": 0.228,
+      "b": 0.476,
+      "delta": -0.248,
+      "ci95": [
+        -0.283,
+        -0.214
+      ],
+      "b_only": 58,
+      "c_only": 306,
+      "mcnemar_p": 8.019408994754063e-42,
+      "n": 1000,
+      "lower_better": false
+    }
+  }
+}
